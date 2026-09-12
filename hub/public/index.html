@@ -1,68 +1,78 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>claude-web</title>
-  <link rel="stylesheet" href="/vendor/xterm.css" />
-  <link rel="stylesheet" href="/app.css" />
-</head>
-<body>
-  <aside id="sidebar">
-    <header>
-      <h1>claude-web</h1>
-      <span id="conn" class="dot" title="hub connection"></span>
-    </header>
-    <form id="new-session">
-      <input name="cwd" placeholder="/absolute/project/path" required />
-      <input name="name" placeholder="name (optional)" />
-      <button type="submit">New session</button>
-    </form>
-    <ul id="sessions"></ul>
-  </aside>
-
-  <main id="main">
-    <div id="empty">Pick a session on the left, or start one.</div>
-    <section id="session" hidden>
-      <header id="session-header">
-        <div>
-          <strong id="s-name"></strong>
-          <span id="s-kind" class="badge"></span>
-          <span id="s-status" class="badge"></span>
-        </div>
-        <code id="s-cwd"></code>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>claude-web</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%234f46e5%27/%3E%3Ctext x=%278%27 y=%2712%27 font-size=%2711%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27monospace%27%3E%E2%9D%AF%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <aside id="rail">
+      <header class="rail-head">
+        <h1>claude-web</h1>
+        <span id="root" class="muted" title="launch directory"></span>
+        <button id="new-toggle" class="primary">New session</button>
       </header>
-      <nav id="tabs">
-        <button data-tab="chat" class="active">Chat</button>
-        <button data-tab="term" id="tab-term">Terminal</button>
-      </nav>
-      <div id="perm-banner" hidden>
-        <div id="perm-body"></div>
+      <form id="new-form" hidden>
+        <label>Directory <input name="cwd" placeholder="(launch directory)" /></label>
+        <label>Name <input name="name" placeholder="optional" /></label>
+        <label>First prompt <textarea name="prompt" rows="3" placeholder="optional; typed once the session is ready"></textarea></label>
         <div class="row">
-          <button id="perm-allow">Allow</button>
-          <button id="perm-deny" class="danger">Deny</button>
+          <button type="submit" class="primary">Start</button>
+          <button type="button" id="new-cancel">Cancel</button>
         </div>
-      </div>
-      <div id="pane-chat" class="pane">
-        <div id="chat-log"></div>
-        <form id="composer">
-          <textarea id="composer-text" rows="3" placeholder="Message… (Enter = Send, Shift+Enter = newline)"></textarea>
-          <div class="row">
-            <button type="submit" id="btn-send" title="Push as a channel message (next turn)">Send</button>
-            <button type="button" id="btn-steer" title="Type into the terminal prompt now (queued mid-turn)">Steer</button>
-            <button type="button" id="btn-stop" title="Send Escape to interrupt the current turn">Stop</button>
-            <button type="button" id="btn-kill" class="danger" title="Terminate the Claude process">Kill</button>
-          </div>
-        </form>
-      </div>
-      <div id="pane-term" class="pane" hidden>
-        <div id="term"></div>
-      </div>
-    </section>
-  </main>
+      </form>
+      <ul id="sessions"></ul>
+      <footer class="rail-foot muted"><span id="conn">connecting…</span></footer>
+    </aside>
 
-  <script src="/vendor/xterm.js"></script>
-  <script src="/vendor/xterm-addon-fit.js"></script>
-  <script type="module" src="/app.js"></script>
-</body>
+    <main id="main">
+      <section id="empty" class="empty">
+        <p>Select a session on the left, or start a new one.</p>
+      </section>
+
+      <section id="view" hidden>
+        <header id="view-head">
+          <div class="title-block">
+            <h2 id="view-title"></h2>
+            <div class="muted small" id="view-sub"></div>
+          </div>
+          <nav class="tabs">
+            <button class="tab active" data-tab="conv">Conversation</button>
+            <button class="tab" data-tab="term" id="tab-term">Terminal</button>
+          </nav>
+          <div class="toggles small">
+            <label><input type="checkbox" id="show-thinking" /> thinking</label>
+            <label><input type="checkbox" id="show-meta" /> meta</label>
+            <label><input type="checkbox" id="show-sidechain" /> subagents</label>
+            <label><input type="checkbox" id="follow" checked /> follow</label>
+          </div>
+        </header>
+
+        <div id="perm-banner" hidden></div>
+
+        <div id="conv" class="pane">
+          <div id="truncated" class="notice" hidden>Older entries were omitted to keep the page light.</div>
+          <div id="timeline"></div>
+        </div>
+        <div id="term" class="pane" hidden><div id="xterm"></div></div>
+
+        <footer id="composer">
+          <textarea id="msg" rows="2" placeholder="Message the session… (Enter to send, Shift+Enter for newline)"></textarea>
+          <div class="actions">
+            <button id="send" class="primary">Send</button>
+            <button id="stop" title="Escape: interrupt the current turn">Stop</button>
+            <button id="kill" class="danger">Kill</button>
+          </div>
+          <div id="status-bar" class="small muted"></div>
+        </footer>
+      </section>
+    </main>
+
+    <script src="/vendor/xterm.js"></script>
+    <script src="/vendor/xterm-addon-fit.js"></script>
+    <script src="/app.js"></script>
+  </body>
 </html>

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { SessionManager, type SessionEvent } from "../src/sessions";
 
 async function waitFor(pred: () => boolean, ms = 3000): Promise<void> {
@@ -32,19 +34,18 @@ describe("SessionManager", () => {
   test("spawn runs the command under a PTY and reports running", async () => {
     const m = make();
     const s = m.spawn({ cwd: tmpdir(), name: "t" });
-    expect(s.kind).toBe("spawned");
     expect(s.status).toBe("running");
     expect(s.pid).toBeGreaterThan(0);
     expect(m.list().map((x) => x.id)).toContain(s.id);
     expect(m.get(s.id)?.name).toBe("t");
   });
 
-  test("steer types text + CR, output lands in pty events and the ring buffer", async () => {
+  test("message types text + CR, output lands in pty events and the ring buffer", async () => {
     const m = make();
     const events: SessionEvent[] = [];
     m.onEvent((e) => events.push(e));
     const s = m.spawn({ cwd: tmpdir() });
-    m.steer(s.id, "hello-steer");
+    m.message(s.id, "hello-steer");
     await waitFor(() => /hello-steer\r?\n/.test(ptyText(events, s.id)));
     const ring = Buffer.from(m.ring(s.id)!).toString("utf8");
     expect(ring).toContain("hello-steer");
@@ -89,42 +90,6 @@ describe("SessionManager", () => {
     expect(m.get(removed[0])).toBeUndefined();
   });
 
-  test("attachExternal registers an external session; owned controls throw", () => {
-    const m = make();
-    const s = m.attachExternal({
-      type: "hello",
-      sessionId: "ext-1",
-      cwd: "/tmp",
-      pid: 123,
-      ppid: 1,
-      name: "ext",
-    });
-    expect(s.kind).toBe("external");
-    expect(s.agentConnected).toBe(true);
-    expect(() => m.stop("ext-1")).toThrow(/external/);
-    expect(() => m.steer("ext-1", "x")).toThrow(/external/);
-    expect(() => m.kill("ext-1")).toThrow(/external/);
-    m.agentDisconnected("ext-1");
-    expect(m.get("ext-1")?.status).toBe("disconnected");
-    expect(m.get("ext-1")?.agentConnected).toBe(false);
-  });
-
-  test("attachExternal on a spawned session only flips agentConnected", () => {
-    const m = make();
-    const s = m.spawn({ cwd: tmpdir() });
-    const after = m.attachExternal({
-      type: "hello",
-      sessionId: s.id,
-      cwd: tmpdir(),
-      pid: 999,
-      ppid: 1,
-      name: null,
-    });
-    expect(after.kind).toBe("spawned");
-    expect(after.agentConnected).toBe(true);
-    expect(after.pid).toBe(s.pid);
-  });
-
   test("remove kills the process outright", async () => {
     const m = make();
     const s = m.spawn({ cwd: tmpdir() });
@@ -134,9 +99,80 @@ describe("SessionManager", () => {
     expect(await proc.exited).not.toBe(0);
   });
 
+  test("an initial prompt is typed once the input box (❯) has appeared and settled", async () => {
+    // A shell prints "❯" then waits; the prompt must arrive after it, not before.
+    const m = new SessionManager({
+      spawnCommand: () => ["sh", "-c", "printf 'booting\\n'; sleep 0.3; printf '❯ '; cat"],
+      hubUrl: "ws://127.0.0.1:1",
+    });
+    managers.push(m);
+    const events: SessionEvent[] = [];
+    m.onEvent((e) => events.push(e));
+    const s = m.spawn({ cwd: tmpdir(), prompt: "first-prompt" });
+    await waitFor(() => /first-prompt\r?\n/.test(ptyText(events, s.id)), 5000);
+    const text = ptyText(events, s.id);
+    expect(text.indexOf("❯")).toBeLessThan(text.indexOf("first-prompt"));
+  });
+
+  test("the prompt marker still matches when its UTF-8 bytes straddle two PTY reads", async () => {
+    // ❯ is E2 9D AF; emit the first byte, pause, then the rest.
+    const m = new SessionManager({
+      spawnCommand: () => ["sh", "-c", "printf '\\342'; sleep 0.3; printf '\\235\\257 '; cat"],
+      hubUrl: "ws://127.0.0.1:1",
+    });
+    managers.push(m);
+    const events: SessionEvent[] = [];
+    m.onEvent((e) => events.push(e));
+    const s = m.spawn({ cwd: tmpdir(), prompt: "split-prompt" });
+    await waitFor(() => /split-prompt\r?\n/.test(ptyText(events, s.id)), 5000);
+    // A blank prompt is never typed.
+    const blank = m.spawn({ cwd: tmpdir(), prompt: "   " });
+    expect((m as any).sessions.get(blank.id).pendingPrompt).toBeNull();
+  });
+
+  test("spawned sessions only get CLAUDE_WEB_NAME when a name was given", async () => {
+    const m = new SessionManager({ spawnCommand: () => ["sh", "-c", "echo NAME=${CLAUDE_WEB_NAME-unset}; cat"], hubUrl: "ws://127.0.0.1:1" });
+    managers.push(m);
+    const events: SessionEvent[] = [];
+    m.onEvent((e) => events.push(e));
+    const anon = m.spawn({ cwd: tmpdir() });
+    const named = m.spawn({ cwd: tmpdir(), name: "nm" });
+    await waitFor(() => /NAME=unset/.test(ptyText(events, anon.id)));
+    await waitFor(() => /NAME=nm/.test(ptyText(events, named.id)));
+  });
+
+  test("cwd is resolved to its real path, matching where Claude Code writes the transcript", async () => {
+    const m = make();
+    const real = realpathSync(tmpdir());
+    const link = join(real, `cw-link-${process.pid}`);
+    try {
+      symlinkSync(real, link);
+      expect(m.spawn({ cwd: link }).cwd).toBe(real);
+    } finally {
+      rmSync(link, { force: true });
+    }
+    expect(() => m.spawn({ cwd: join(real, "does-not-exist") })).toThrow();
+  });
+
   test("unknown ids throw", () => {
     const m = make();
     expect(() => m.stop("nope")).toThrow(/no such session/);
+  });
+});
+
+describe("defaultSpawnCommand", () => {
+  test("loads the channel plugin only when asked", async () => {
+    const { defaultSpawnCommand } = await import("../src/sessions");
+    expect(defaultSpawnCommand("id1", null, undefined)).toEqual(["claude", "--session-id", "id1"]);
+    expect(defaultSpawnCommand("id1", "nm", "plugin:claude-web@claude-web")).toEqual([
+      "claude",
+      "--session-id",
+      "id1",
+      "--dangerously-load-development-channels",
+      "plugin:claude-web@claude-web",
+      "--name",
+      "nm",
+    ]);
   });
 });
 

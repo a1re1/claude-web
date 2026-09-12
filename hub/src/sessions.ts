@@ -1,51 +1,64 @@
-// Session management for the claude-web hub: spawn Claude Code (or register
-// externally-started sessions) under a PTY, keep a bounded ring buffer of
-// terminal output for late joiners, tail the session's Claude Code transcript,
-// and expose stop/steer/write/resize/kill controls.
+// Process management for the claude-web hub: spawn Claude Code under a PTY,
+// keep a bounded ring buffer of terminal output for late joiners, and expose
+// message/stop/write/resize/kill controls. Only sessions the hub started live
+// here; sessions started elsewhere are discovered from disk (see discovery.ts)
+// and are read-only.
 //
-// All terminal output is broadcast as base64 `pty` events; transcript events
-// are broadcast as `transcript` events; session status changes as `session`
-// events (see onEvent).
+// Terminal output is broadcast as base64 `pty` events; lifecycle changes as
+// `session` / `session_removed` events (see onEvent).
 
 import { randomUUID } from "node:crypto";
-import type { AgentHello, Session, SessionKind, SessionStatus } from "./protocol";
-import { TranscriptTailer, transcriptPath, type TranscriptEvent } from "./transcript";
+import { realpathSync } from "node:fs";
 
 /* ---------------------------------- events ---------------------------------- */
 
+export type SpawnedStatus = "running" | "exited";
+
+// What the hub knows about a process it spawned. Merged with the transcript
+// metadata from discovery.ts into the wire-level Session.
+export interface SpawnedInfo {
+  id: string;
+  name: string | null;
+  cwd: string;
+  pid: number | null;
+  status: SpawnedStatus;
+  exitCode: number | null;
+  exitSignal: string | null;
+  createdAt: number;
+}
+
+// Thrown by the control verbs when the target process is no longer running.
+export class SessionExitedError extends Error {
+  constructor(id: string) {
+    super(`session ${id} has exited`);
+    this.name = "SessionExitedError";
+  }
+}
+
 export type SessionEvent =
   | { type: "pty"; id: string; data: string } // base64 of raw PTY bytes
-  | { type: "transcript"; id: string; event: TranscriptEvent }
-  | { type: "session"; session: Session }
-  | { type: "session_removed"; id: string }; // evicted by the exited-session cap
+  | { type: "session"; session: SpawnedInfo }
+  | { type: "session_removed"; id: string }; // removed explicitly or evicted by the exited cap
 
 /* --------------------------------- constants -------------------------------- */
 
 const RING_BYTES = 256 * 1024; // 256 KiB of recent PTY output for late joiners
 const EXITED_RING_BYTES = 32 * 1024; // retained after exit, until removed or evicted
-const MAX_EXITED = 50; // exited spawned sessions kept for post-mortems; oldest evicted beyond this
+const MAX_EXITED = 50; // exited sessions kept for post-mortems; oldest evicted beyond this
 const KILL_GRACE_MS = 3_000; // SIGTERM -> SIGKILL delay
+const PROMPT_SETTLE_MS = 700; // quiet time after the input box appears before typing the first prompt
 const DEFAULT_HUB_URL = "ws://127.0.0.1:8790";
 
-/* ---------------------------------- session --------------------------------- */
+/* ---------------------------------- records --------------------------------- */
 
-interface SessionRecord {
-  id: string;
-  name: string | null;
-  cwd: string;
-  kind: SessionKind;
-  status: SessionStatus;
-  pid: number | null;
-  exitCode: number | null;
-  exitSignal: string | null;
-  createdAt: number;
-  agentConnected: boolean;
-
+interface SessionRecord extends SpawnedInfo {
   proc?: Bun.Subprocess<"ignore", "ignore", "ignore">;
   terminal?: { write(data: string | Uint8Array): void; resize(cols: number, rows: number): void };
   ring?: RingBuffer;
-  tailer?: TranscriptTailer;
   killTimer?: ReturnType<typeof setTimeout>;
+  promptTimer?: ReturnType<typeof setTimeout>;
+  pendingPrompt: string | null; // typed once the input box shows up
+  promptDecoder?: TextDecoder; // streaming decoder so a marker split across chunks still matches
   removed: boolean;
 }
 
@@ -100,6 +113,21 @@ export function childEnv(base: NodeJS.ProcessEnv = process.env): Record<string, 
   return env;
 }
 
+// The default `claude` invocation. The channel plugin is opt-in: set
+// CLAUDE_WEB_CHANNEL (e.g. plugin:claude-web@claude-web or server:claude-web)
+// to load it for Allow/Deny buttons in the UI; without it the hub drives the
+// session purely through its PTY.
+export function defaultSpawnCommand(
+  id: string,
+  name: string | null,
+  channel: string | undefined = process.env.CLAUDE_WEB_CHANNEL,
+): string[] {
+  const cmd = ["claude", "--session-id", id];
+  if (channel) cmd.push("--dangerously-load-development-channels", channel);
+  if (name != null) cmd.push("--name", name);
+  return cmd;
+}
+
 /* ------------------------------- session manager ----------------------------- */
 
 export interface SessionManagerOptions {
@@ -122,36 +150,27 @@ export class SessionManager {
   constructor(opts: SessionManagerOptions = {}) {
     this.hubUrl = opts.hubUrl ?? process.env.CLAUDE_WEB_HUB ?? DEFAULT_HUB_URL;
     this.agentToken = opts.agentToken;
-    this.spawnCommand =
-      opts.spawnCommand ??
-      ((id, name) => {
-        const cmd = [
-          "claude",
-          "--session-id",
-          id,
-          "--dangerously-load-development-channels",
-          process.env.CLAUDE_WEB_CHANNEL ?? "plugin:claude-web@claude-web",
-        ];
-        if (name != null) cmd.push("--name", name);
-        return cmd;
-      });
+    this.spawnCommand = opts.spawnCommand ?? ((id, name) => defaultSpawnCommand(id, name));
   }
 
   /* --------------------------------- lifecycle ------------------------------- */
 
-  spawn({ cwd, name }: { cwd: string; name?: string | null }): Session {
+  spawn({ cwd: rawCwd, name, prompt }: { cwd: string; name?: string | null; prompt?: string | null }): SpawnedInfo {
+    // Claude Code keys its transcript directory on the resolved cwd
+    // (/tmp/x -> /private/tmp/x on macOS), so resolve it here too or the
+    // conversation would be looked up under the wrong project directory.
+    const cwd = realpathSync(rawCwd);
     const id = randomUUID();
     const rec: SessionRecord = {
       id,
       name: name ?? null,
       cwd,
-      kind: "spawned",
-      status: "starting",
       pid: null,
+      status: "running",
       exitCode: null,
       exitSignal: null,
       createdAt: Date.now(),
-      agentConnected: false,
+      pendingPrompt: prompt && prompt.trim() ? prompt : null,
       removed: false,
     };
     this.sessions.set(id, rec);
@@ -164,7 +183,7 @@ export class SessionManager {
           ...childEnv(),
           CLAUDE_WEB_SESSION: id,
           CLAUDE_WEB_CWD: cwd,
-          CLAUDE_WEB_NAME: name ?? "",
+          ...(name ? { CLAUDE_WEB_NAME: name } : {}),
           CLAUDE_WEB_HUB: this.hubUrl,
           ...(this.agentToken ? { CLAUDE_WEB_TOKEN: this.agentToken } : {}),
         },
@@ -175,7 +194,7 @@ export class SessionManager {
         },
       });
     } catch (err) {
-      // Spawn failed: do not leave a live "starting" session behind.
+      // Spawn failed: do not leave a live session behind.
       this.sessions.delete(id);
       throw err;
     }
@@ -184,11 +203,6 @@ export class SessionManager {
     rec.pid = proc.pid;
     rec.terminal = proc.terminal;
     rec.ring = new RingBuffer(RING_BYTES);
-    rec.status = "running";
-    rec.tailer = new TranscriptTailer(transcriptPath(cwd, id), (event) =>
-      this.emit({ type: "transcript", id, event }),
-    );
-    rec.tailer.start();
 
     void this.watchExit(rec);
     this.emitSession(rec);
@@ -204,7 +218,7 @@ export class SessionManager {
     rec.exitSignal = proc.signalCode ?? null;
     rec.status = "exited";
     this.clearKillTimer(rec);
-    rec.tailer?.stop();
+    this.clearPromptTimer(rec);
     // Keep only the tail of the output for post-mortems so exited sessions
     // do not each pin 256 KiB until they are reaped.
     if (rec.ring) rec.ring = rec.ring.tail(EXITED_RING_BYTES);
@@ -213,123 +227,72 @@ export class SessionManager {
   }
 
   // Keep the registry bounded on a long-lived hub: beyond MAX_EXITED exited
-  // sessions, drop the oldest so records, rings and tailers do not pile up.
+  // sessions, drop the oldest so records and rings do not pile up.
   private evictExited(): void {
     const exited = [...this.sessions.values()]
       .filter((r) => r.status === "exited")
       .sort((a, b) => a.createdAt - b.createdAt);
     for (const rec of exited.slice(0, Math.max(0, exited.length - MAX_EXITED))) {
       this.remove(rec.id);
-      this.emit({ type: "session_removed", id: rec.id });
     }
   }
 
   /* --------------------------------- registry -------------------------------- */
 
-  list(): Session[] {
+  list(): SpawnedInfo[] {
     return [...this.sessions.values()].map((rec) => this.summary(rec));
   }
 
-  get(id: string): Session | undefined {
+  get(id: string): SpawnedInfo | undefined {
     const rec = this.sessions.get(id);
     return rec ? this.summary(rec) : undefined;
   }
 
-  // Called when a plugin dials the hub's /agent endpoint with its hello frame.
-  // Registers a kind:'external' session, or flips agentConnected on an already
-  // spawned session (the plugin dialing home) without changing its ownership.
-  attachExternal(hello: AgentHello): Session {
-    const existing = this.sessions.get(hello.sessionId);
-    if (existing) {
-      existing.agentConnected = true;
-      if (existing.kind === "external") {
-        // The plugin process is the only pid we know for external sessions.
-        existing.pid = hello.pid ?? existing.pid;
-        if (existing.status !== "running") existing.status = "running";
-      }
-      this.emitSession(existing);
-      return this.summary(existing);
-    }
-    const rec: SessionRecord = {
-      id: hello.sessionId,
-      name: hello.name ?? null,
-      cwd: hello.cwd,
-      kind: "external",
-      status: "running",
-      pid: hello.pid ?? null,
-      exitCode: null,
-      exitSignal: null,
-      createdAt: Date.now(),
-      agentConnected: true,
-      removed: false,
-    };
-    this.sessions.set(rec.id, rec);
-    this.emitSession(rec);
-    return this.summary(rec);
-  }
-
-  // The plugin socket dropped: agentConnected=false; external sessions become
-  // 'disconnected' (nobody owns their PTY anymore), spawned sessions keep
-  // running under the hub's PTY.
-  agentDisconnected(id: string): void {
-    const rec = this.sessions.get(id);
-    if (!rec) return;
-    rec.agentConnected = false;
-    if (rec.kind === "external") rec.status = "disconnected";
-    this.emitSession(rec);
-  }
-
+  // Forget a session: SIGKILL if it is somehow still alive, drop its record.
   remove(id: string): void {
     const rec = this.sessions.get(id);
     if (!rec) return;
     rec.removed = true;
-    rec.tailer?.stop();
     this.clearKillTimer(rec);
+    this.clearPromptTimer(rec);
     try {
       rec.proc?.kill("SIGKILL"); // no record left to escalate from, so go straight to SIGKILL
     } catch {
       /* already gone */
     }
     this.sessions.delete(id);
+    this.emit({ type: "session_removed", id });
   }
 
   /* --------------------------------- controls -------------------------------- */
 
+  // Type a message into the session's prompt and submit it.
+  message(id: string, text: string): void {
+    this.mustRunning(id).terminal!.write(text + "\r");
+  }
+
+  // Escape interrupts the current turn (Claude Code's own binding).
   stop(id: string): void {
-    const rec = this.mustGet(id);
-    this.requireOwned(rec);
-    rec.terminal?.write("\x1b"); // Escape interrupts the running turn
+    this.mustRunning(id).terminal!.write("\x1b");
   }
 
-  steer(id: string, text: string): void {
-    const rec = this.mustGet(id);
-    this.requireOwned(rec);
-    rec.terminal?.write(text + "\r");
-  }
-
-  // Raw keystrokes. Bytes go straight to the PTY so multi-byte sequences
-  // split across calls are not mangled by a string round-trip.
   write(id: string, data: string | Uint8Array): void {
-    const rec = this.mustGet(id);
-    this.requireOwned(rec);
-    rec.terminal?.write(data);
+    this.mustRunning(id).terminal!.write(data);
   }
 
   resize(id: string, cols: number, rows: number): void {
-    const rec = this.mustGet(id);
-    this.requireOwned(rec);
-    rec.terminal?.resize(cols, rows);
+    this.mustRunning(id).terminal!.resize(cols, rows);
   }
 
+  // SIGTERM, then SIGKILL after KILL_GRACE_MS if the process is still around.
   kill(id: string): void {
     const rec = this.mustGet(id);
-    this.requireOwned(rec);
     const proc = rec.proc;
-    if (!proc) return;
+    if (!proc || rec.status === "exited") return;
     try {
-      proc.kill(); // SIGTERM
+      proc.kill("SIGTERM");
     } catch {
-      return;
+      return; // already gone
     }
     this.clearKillTimer(rec);
     rec.killTimer = setTimeout(() => {
@@ -357,11 +320,17 @@ export class SessionManager {
     return () => this.listeners.delete(listener);
   }
 
-  /* ---------------------------------- helpers -------------------------------- */
+  /* ---------------------------------- helpers --------------------------------- */
 
   private mustGet(id: string): SessionRecord {
     const rec = this.sessions.get(id);
     if (!rec) throw new Error(`no such session: ${id}`);
+    return rec;
+  }
+
+  private mustRunning(id: string): SessionRecord {
+    const rec = this.mustGet(id);
+    if (rec.status !== "running" || !rec.terminal) throw new SessionExitedError(id);
     return rec;
   }
 
@@ -370,30 +339,45 @@ export class SessionManager {
     rec.killTimer = undefined;
   }
 
-  private requireOwned(rec: SessionRecord): void {
-    if (rec.kind === "external") {
-      throw new Error(`session ${rec.id} is external; the hub does not own its terminal`);
-    }
+  private clearPromptTimer(rec: SessionRecord): void {
+    if (rec.promptTimer) clearTimeout(rec.promptTimer);
+    rec.promptTimer = undefined;
   }
 
   private onPtyChunk(rec: SessionRecord, chunk: Uint8Array): void {
     if (rec.removed) return;
     rec.ring?.push(chunk);
     this.emit({ type: "pty", id: rec.id, data: Buffer.from(chunk).toString("base64") });
+    if (rec.pendingPrompt !== null) this.maybeTypePrompt(rec, chunk);
   }
 
-  private summary(rec: SessionRecord): Session {
+  // The initial prompt is typed once Claude Code has drawn its input box
+  // ("❯") and the screen has then been quiet for PROMPT_SETTLE_MS, so it lands
+  // in the prompt rather than in a startup dialog. The marker is three UTF-8
+  // bytes and may straddle two PTY reads, hence the streaming decoder.
+  private maybeTypePrompt(rec: SessionRecord, chunk: Uint8Array): void {
+    rec.promptDecoder ??= new TextDecoder();
+    const text = rec.promptDecoder.decode(chunk, { stream: true });
+    if (!rec.promptTimer && !text.includes("❯")) return;
+    this.clearPromptTimer(rec);
+    rec.promptTimer = setTimeout(() => {
+      rec.promptTimer = undefined;
+      const prompt = rec.pendingPrompt;
+      rec.pendingPrompt = null;
+      if (prompt !== null && rec.status === "running" && rec.terminal) rec.terminal.write(prompt + "\r");
+    }, PROMPT_SETTLE_MS);
+  }
+
+  private summary(rec: SessionRecord): SpawnedInfo {
     return {
       id: rec.id,
       name: rec.name,
       cwd: rec.cwd,
-      kind: rec.kind,
-      status: rec.status,
       pid: rec.pid,
+      status: rec.status,
       exitCode: rec.exitCode,
       exitSignal: rec.exitSignal,
       createdAt: rec.createdAt,
-      agentConnected: rec.agentConnected,
     };
   }
 
