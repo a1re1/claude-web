@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>claude-web</title>
+  <link rel="stylesheet" href="/vendor/xterm.css" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <aside id="sidebar">
+    <header>
+      <h1>claude-web</h1>
+      <span id="conn" class="dot" title="hub connection"></span>
+    </header>
+    <form id="new-session">
+      <input name="cwd" placeholder="/absolute/project/path" required />
+      <input name="name" placeholder="name (optional)" />
+      <button type="submit">New session</button>
+    </form>
+    <ul id="sessions"></ul>
+  </aside>
+
+  <main id="main">
+    <div id="empty">Pick a session on the left, or start one.</div>
+    <section id="session" hidden>
+      <header id="session-header">
+        <div>
+          <strong id="s-name"></strong>
+          <span id="s-kind" class="badge"></span>
+          <span id="s-status" class="badge"></span>
+        </div>
+        <code id="s-cwd"></code>
+      </header>
+      <nav id="tabs">
+        <button data-tab="chat" class="active">Chat</button>
+        <button data-tab="term" id="tab-term">Terminal</button>
+      </nav>
+      <div id="perm-banner" hidden>
+        <div id="perm-body"></div>
+        <div class="row">
+          <button id="perm-allow">Allow</button>
+          <button id="perm-deny" class="danger">Deny</button>
+        </div>
+      </div>
+      <div id="pane-chat" class="pane">
+        <div id="chat-log"></div>
+        <form id="composer">
+          <textarea id="composer-text" rows="3" placeholder="Message… (Enter = Send, Shift+Enter = newline)"></textarea>
+          <div class="row">
+            <button type="submit" id="btn-send" title="Push as a channel message (next turn)">Send</button>
+            <button type="button" id="btn-steer" title="Type into the terminal prompt now (queued mid-turn)">Steer</button>
+            <button type="button" id="btn-stop" title="Send Escape to interrupt the current turn">Stop</button>
+            <button type="button" id="btn-kill" class="danger" title="Terminate the Claude process">Kill</button>
+          </div>
+        </form>
+      </div>
+      <div id="pane-term" class="pane" hidden>
+        <div id="term"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/xterm-addon-fit.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
