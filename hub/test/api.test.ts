@@ -127,6 +127,7 @@ describe("hub HTTP API", () => {
     expect((await js.text()).length).toBeGreaterThan(10_000);
     expect((await fetch(base + "/vendor/xterm.css")).status).toBe(200);
     expect((await fetch(base + "/vendor/xterm-addon-fit.js")).status).toBe(200);
+    expect((await fetch(base + "/markdown.js")).status).toBe(200);
   });
 
   test("cross-origin browser requests are refused", async () => {

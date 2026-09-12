@@ -48,6 +48,7 @@ const STATIC: Record<string, string> = {
   "/": join(PUBLIC_DIR, "index.html"),
   "/index.html": join(PUBLIC_DIR, "index.html"),
   "/app.js": join(PUBLIC_DIR, "app.js"),
+  "/markdown.js": join(PUBLIC_DIR, "markdown.js"),
   "/app.css": join(PUBLIC_DIR, "app.css"),
   // xterm is vendored from node_modules so the UI works without a CDN.
   "/vendor/xterm.js": Bun.resolveSync("@xterm/xterm/lib/xterm.js", import.meta.dir),

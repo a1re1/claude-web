@@ -269,10 +269,11 @@
     const node = h("div", { class: `entry ${e.kind}${e.isError ? " error" : ""}${visible(e) ? "" : " hidden"}`, "data-uuid": e.uuid });
     switch (e.kind) {
       case "prompt":
-        node.append(head(e.meta ? "you (meta)" : "you"), h("div", { class: "body", text: e.text }));
+        // Meta prompts are injected context (skill bodies etc.): keep them verbatim.
+        node.append(head(e.meta ? "you (meta)" : "you"), e.meta ? h("div", { class: "body", text: e.text }) : markdown(e.text));
         break;
       case "text":
-        node.append(head("claude"), h("div", { class: "body", text: e.text }));
+        node.append(head("claude"), markdown(e.text));
         break;
       case "thinking":
         node.append(h("details", {}, h("summary", { text: `thinking · ${short(e.text, 80)}` }), h("div", { class: "body", text: e.text })));
@@ -299,6 +300,18 @@
         node.append(h("pre", { text: pretty(e) }));
     }
     return node;
+  }
+
+  // Rendered Markdown (see markdown.js); falls back to plain text if the
+  // renderer failed to load or throws on odd input.
+  function markdown(text) {
+    const body = h("div", { class: "body md" });
+    try {
+      body.append(window.renderMarkdown(text));
+    } catch {
+      body.textContent = text;
+    }
+    return body;
   }
 
   // A short hint for a tool call: the most descriptive string in its input
