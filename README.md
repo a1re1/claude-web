@@ -118,6 +118,11 @@ bun test hub         # hub tests (transcript fixtures + `cat` under a PTY, no re
 bun test plugin      # hub-client reconnect tests
 ```
 
+The UI follows the Vitrine design system (a liquid-glass, mac-native language): its tokens are
+copied into `hub/public/app.css` (typography, colors, materials, radii, motion) so the page has no
+runtime dependency on the design project. Light and dark follow the system, or pin one with
+`data-theme="light|dark"` on the root element.
+
 Layout: `hub/src/discovery.ts` (registry + transcript scan), `hub/src/conversation.ts` (JSONL →
 entries, tailer), `hub/src/sessions.ts` (PTY processes), `hub/src/index.ts` (HTTP/WS),
 `hub/src/cli.ts`, `hub/public/` (framework-free UI), `plugin/` (optional channel plugin).

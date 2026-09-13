@@ -4,17 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>claude-web</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%273%27 fill=%27%234f46e5%27/%3E%3Ctext x=%278%27 y=%2712%27 font-size=%2711%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27monospace%27%3E%E2%9D%AF%3C/text%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%275%27 fill=%27%233b7ce6%27/%3E%3Ctext x=%278%27 y=%2712%27 font-size=%2711%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27monospace%27%3E%E2%9D%AF%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/vendor/xterm.css" />
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
+    <div class="window">
     <aside id="rail">
       <header class="rail-head">
         <h1>claude-web</h1>
         <span id="root" class="muted" title="launch directory"></span>
-        <button id="new-toggle" class="primary">New session</button>
-        <label class="small rail-toggle" title="Sessions that are alive but have no conversation yet (an unused terminal tab)"><input type="checkbox" id="show-empty" /> show empty sessions <span id="empty-count" class="muted"></span></label>
+        <button id="new-toggle" class="primary">New Session</button>
+        <label class="rail-toggle" title="Sessions that are alive but have no conversation yet (an unused terminal tab)"><input type="checkbox" id="show-empty" /> Show empty sessions <span id="empty-count"></span></label>
       </header>
       <form id="new-form" hidden>
         <label>Directory <input name="cwd" placeholder="(launch directory)" /></label>
@@ -45,10 +46,10 @@
             <button class="tab" data-tab="term" id="tab-term">Terminal</button>
           </nav>
           <div class="toggles small">
-            <label><input type="checkbox" id="show-thinking" /> thinking</label>
-            <label><input type="checkbox" id="show-meta" /> meta</label>
-            <label><input type="checkbox" id="show-sidechain" /> subagents</label>
-            <label><input type="checkbox" id="follow" checked /> follow</label>
+            <label><input type="checkbox" id="show-thinking" /> Thinking</label>
+            <label><input type="checkbox" id="show-meta" /> Meta</label>
+            <label><input type="checkbox" id="show-sidechain" /> Subagents</label>
+            <label><input type="checkbox" id="follow" checked /> Follow</label>
           </div>
         </header>
 
@@ -72,6 +73,7 @@
         </footer>
       </section>
     </main>
+    </div>
 
     <script src="/vendor/xterm.js"></script>
     <script src="/vendor/xterm-addon-fit.js"></script>

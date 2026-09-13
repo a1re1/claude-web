@@ -253,9 +253,10 @@
       if (!e.sidechain) lastInput = e.usage.input + e.usage.cacheRead + e.usage.cacheCreate;
     }
     const pct = lastInput ? Math.min(100, Math.round((lastInput / MAX_CONTEXT_TOKENS) * 100)) : 0;
+    const stateCls = s.busy ? "busy" : s.running ? "idle" : "exited";
     const parts = [
-      s.busy ? "● working" : s.running ? "○ idle" : s.spawned ? `■ exited${s.exitSignal ? ` (${s.exitSignal})` : s.exitCode != null ? ` (${s.exitCode})` : ""}` : "■ not running",
-      s.memoryBytes ? `memory ${fmtBytes(s.memoryBytes)}` : null,
+      s.busy ? "Working" : s.running ? "Idle" : s.spawned ? `Exited${s.exitSignal ? ` (${s.exitSignal})` : s.exitCode != null ? ` (${s.exitCode})` : ""}` : "Not running",
+      s.memoryBytes ? `${fmtBytes(s.memoryBytes)} memory` : null,
       model ? `model ${model}` : null,
       `${turns} prompt${turns === 1 ? "" : "s"}`,
       `${tools} tool call${tools === 1 ? "" : "s"}`,
@@ -263,7 +264,9 @@
       out ? `output ${fmtNum(out)}` : null,
       `${state.entries.length} entries`,
     ];
-    el.status.replaceChildren(...parts.filter(Boolean).map((t) => h("span", { class: t.startsWith("context") && pct >= 80 ? "warn" : "", text: t })));
+    el.status.replaceChildren(
+      ...parts.filter(Boolean).map((t, i) => h("span", { class: i === 0 ? `state ${stateCls}` : t.startsWith("context") && pct >= 80 ? "warn" : "", text: t })),
+    );
   }
 
   /* -------------------------------- timeline -------------------------------- */
