@@ -7,7 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
-import { ConvEntrySchema, type ConvEntry } from "./protocol";
+import { ConvEntrySchema, type ConvEntry, type Image } from "./protocol";
 
 /* ------------------------------ locating files ------------------------------ */
 
@@ -42,38 +42,33 @@ interface RawContentBlock {
   tool_use_id?: unknown;
   is_error?: unknown;
   content?: unknown;
+  source?: unknown; // image blocks: { type: "base64", media_type, data }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function textBlocksOnly(content: unknown): string | null {
-  if (!Array.isArray(content)) return null;
+// Text blocks joined with "\n" plus any inline base64 images, from a content
+// block list. Blocks of other types (documents, unknown future kinds) are
+// skipped rather than sinking the whole record, so a prompt that carries a
+// pasted screenshot still shows its text.
+function textAndImages(content: unknown): { text: string; images: Image[] } {
   const parts: string[] = [];
+  const images: Image[] = [];
+  if (typeof content === "string") return { text: content, images };
+  if (!Array.isArray(content)) return { text: "", images };
   for (const raw of content as RawContentBlock[]) {
-    if (!isRecord(raw) || raw.type !== "text" || typeof raw.text !== "string") {
-      return null;
-    }
-    parts.push(raw.text);
-  }
-  return parts.join("\n");
-}
-
-// tool_result blocks carry string content or an array of blocks; flatten the
-// string or its text blocks into plain text (images and other blocks skipped).
-function toolResultText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    const parts: string[] = [];
-    for (const raw of content as RawContentBlock[]) {
-      if (isRecord(raw) && raw.type === "text" && typeof raw.text === "string") {
-        parts.push(raw.text);
+    if (!isRecord(raw)) continue;
+    if (raw.type === "text" && typeof raw.text === "string") parts.push(raw.text);
+    else if (raw.type === "image") {
+      const src = raw.source;
+      if (isRecord(src) && src.type === "base64" && typeof src.data === "string") {
+        images.push({ mediaType: typeof src.media_type === "string" ? src.media_type : "image/png", data: src.data });
       }
     }
-    return parts.join("\n");
   }
-  return "";
+  return { text: parts.join("\n"), images };
 }
 
 // Epoch ms from an ISO `timestamp` string, a numeric timestamp, else 0.
@@ -135,28 +130,27 @@ function buildEntry(record: Record<string, unknown>): ConvEntry | null {
 
   if (type === "user") {
     if (record.isCompactSummary === true) {
-      const compact = typeof content === "string"
-        ? content
-        : textBlocksOnly(content) ?? "";
-      return { kind: "compact", ...base, text: compact };
+      return { kind: "compact", ...base, text: textAndImages(content).text };
     }
     if (Array.isArray(content)) {
       // Records carry one tool_result per line; surface the first one.
       for (const raw of content as RawContentBlock[]) {
         if (isRecord(raw) && raw.type === "tool_result") {
+          const { text, images } = textAndImages(raw.content);
           return {
             kind: "tool_result",
             ...base,
             toolUseId: typeof raw.tool_use_id === "string" ? raw.tool_use_id : "",
-            text: toolResultText(raw.content),
+            text,
             isError: raw.is_error === true,
+            images,
           };
         }
       }
-    }
-    const text = typeof content === "string" ? content : textBlocksOnly(content);
-    if (text === null) return null;
-    return { kind: "prompt", ...base, text, meta: record.isMeta === true };
+    } else if (typeof content !== "string") return null;
+    const { text, images } = textAndImages(content);
+    if (!text && images.length === 0) return null;
+    return { kind: "prompt", ...base, text, meta: record.isMeta === true, images };
   }
 
   // Assistant: exactly one content block per line.

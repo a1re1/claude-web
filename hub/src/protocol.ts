@@ -19,6 +19,14 @@ export const UsageSchema = z.object({
 });
 export type Usage = z.infer<typeof UsageSchema>;
 
+// An image carried inline by a user turn (pasted/attached) or a tool result
+// (Claude reading an image file). Base64 payload as stored in the transcript.
+export const ImageSchema = z.object({
+  mediaType: z.string(), // e.g. image/png
+  data: z.string(), // base64
+});
+export type Image = z.infer<typeof ImageSchema>;
+
 const base = {
   uuid: z.string(), // record uuid (or a synthesized one for records without it)
   ts: z.number(), // epoch ms, 0 when the record has no timestamp
@@ -35,7 +43,7 @@ const assistantBase = {
 export const ConvEntrySchema = z.discriminatedUnion("kind", [
   // A user turn: plain string content or text blocks. `meta` marks isMeta
   // records (injected context such as skill bodies) the UI hides by default.
-  z.object({ kind: z.literal("prompt"), ...base, text: z.string(), meta: z.boolean() }),
+  z.object({ kind: z.literal("prompt"), ...base, text: z.string(), meta: z.boolean(), images: z.array(ImageSchema) }),
   z.object({ kind: z.literal("text"), ...assistantBase, text: z.string() }),
   z.object({ kind: z.literal("thinking"), ...assistantBase, text: z.string() }),
   z.object({
@@ -51,6 +59,7 @@ export const ConvEntrySchema = z.discriminatedUnion("kind", [
     toolUseId: z.string(),
     text: z.string(), // string content, or text blocks joined with "\n"
     isError: z.boolean(),
+    images: z.array(ImageSchema),
   }),
   // `system` records that carry a non-empty string `content` (hook summaries,
   // notices); other system records are dropped.

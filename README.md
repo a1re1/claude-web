@@ -39,8 +39,10 @@ Flags: `--port N` (default: first free port from 8790, or `CLAUDE_WEB_PORT`), `-
 - **Sessions rail** — every session whose working directory is the root or below it. Running
   sessions come first; a pulsing dot means Claude is mid-turn. Sessions this `claude-web` started
   carry a `claude-web` badge.
-- **Conversation** — the full transcript, streamed as it grows. Thinking, injected meta prompts,
-  and subagent traffic are hidden behind toggles; tool calls and results are collapsible.
+- **Conversation** — the full transcript, streamed as it grows, with Markdown rendering. Images
+  pasted into a prompt or read by Claude are shown inline (click to toggle full size). Thinking,
+  injected meta prompts, and subagent traffic are hidden behind toggles; tool calls and results
+  are collapsible.
 - **Terminal** — an xterm view of the PTY, for sessions `claude-web` started (startup dialogs,
   permission prompts, anything the transcript does not carry).
 - **Composer** — **Send** types the text plus Enter into the PTY. **Stop** sends Escape to

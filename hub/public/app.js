@@ -270,10 +270,13 @@
     const head = (label) => h("div", { class: "head" }, h("span", { text: label }), h("span", { text: fmtTime(e.ts) }), e.sidechain ? h("span", { text: "subagent" }) : null);
     const node = h("div", { class: `entry ${e.kind}${e.isError ? " error" : ""}${visible(e) ? "" : " hidden"}`, "data-uuid": e.uuid });
     switch (e.kind) {
-      case "prompt":
+      case "prompt": {
         // Meta prompts are injected context (skill bodies etc.): keep them verbatim.
-        node.append(head(e.meta ? "you (meta)" : "you"), e.meta ? h("div", { class: "body", text: e.text }) : markdown(e.text));
+        const body = e.meta ? h("div", { class: "body", text: e.text }) : markdown(e.text);
+        if (e.images?.length) body.append(images(e.images));
+        node.append(head(e.meta ? "you (meta)" : "you"), body);
         break;
+      }
       case "text":
         node.append(head("claude"), markdown(e.text));
         break;
@@ -286,9 +289,15 @@
         node.append(h("details", {}, summary, h("pre", { text: input })));
         break;
       }
-      case "tool_result":
-        node.append(h("details", {}, h("summary", {}, h("b", { text: e.isError ? "result (error)" : "result" }), h("span", { text: ` ${short(e.text, 90)}` })), h("pre", { text: e.text })));
+      case "tool_result": {
+        const n = e.images?.length || 0;
+        const hint = n ? `${n} image${n > 1 ? "s" : ""}${e.text ? " · " : ""}` : "";
+        const details = h("details", {}, h("summary", {}, h("b", { text: e.isError ? "result (error)" : "result" }), h("span", { text: ` ${hint}${short(e.text, 90)}` })));
+        if (e.text) details.append(h("pre", { text: e.text }));
+        if (n) details.append(images(e.images));
+        node.append(details);
         break;
+      }
       case "system":
         node.append(h("details", {}, h("summary", {}, h("b", { text: e.subtype }), h("span", { text: ` ${short(e.text, 90)}` })), h("pre", { text: e.text })));
         break;
@@ -302,6 +311,17 @@
         node.append(h("pre", { text: pretty(e) }));
     }
     return node;
+  }
+
+  // Inline images from a prompt or a tool result. Click toggles full size.
+  function images(list) {
+    const wrap = h("div", { class: "images" });
+    for (const im of list) {
+      const img = h("img", { src: `data:${im.mediaType};base64,${im.data}`, alt: "image", loading: "lazy" });
+      img.addEventListener("click", () => img.classList.toggle("full"));
+      wrap.append(img);
+    }
+    return wrap;
   }
 
   // Rendered Markdown (see markdown.js); falls back to plain text if the

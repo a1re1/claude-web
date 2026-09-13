@@ -490,3 +490,72 @@ describe("ConversationTailer", () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+/* -------------------------------- images ------------------------------------ */
+
+describe("parseConvLine with inline images", () => {
+  const PNG = "iVBORw0KGgo="; // any base64 will do; the parser does not decode it
+  const user = (content: unknown, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ type: "user", uuid: "u-img", timestamp: "2026-09-13T12:05:00.000Z", message: { role: "user", content }, ...extra });
+
+  test("a prompt with a pasted image keeps its text and carries the image", () => {
+    const e = parseConvLine(
+      user([
+        { type: "text", text: "what is this a picture of? [Image #1]" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: PNG } },
+      ]),
+    );
+    expect(e?.kind).toBe("prompt");
+    if (e?.kind !== "prompt") return;
+    expect(e.text).toBe("what is this a picture of? [Image #1]");
+    expect(e.images).toEqual([{ mediaType: "image/png", data: PNG }]);
+    expect(e.meta).toBe(false);
+  });
+
+  test("an image-only prompt still renders (empty text, one image)", () => {
+    const e = parseConvLine(user([{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: PNG } }]));
+    expect(e?.kind).toBe("prompt");
+    if (e?.kind !== "prompt") return;
+    expect(e.text).toBe("");
+    expect(e.images[0]?.mediaType).toBe("image/jpeg");
+  });
+
+  test("unknown block types are skipped instead of dropping the prompt", () => {
+    const e = parseConvLine(user([{ type: "document", source: {} }, { type: "text", text: "see attached" }]));
+    expect(e?.kind).toBe("prompt");
+    if (e?.kind !== "prompt") return;
+    expect(e.text).toBe("see attached");
+    expect(e.images).toEqual([]);
+  });
+
+  test("a prompt with neither text nor images drops", () => {
+    expect(parseConvLine(user([{ type: "document", source: {} }]))).toBeNull();
+  });
+
+  test("string prompts and tool results without images have an empty images list", () => {
+    const p = parseConvLine(user("plain"));
+    expect(p?.kind === "prompt" && p.images).toEqual([]);
+    const r = parseConvLine(user([{ type: "tool_result", tool_use_id: "t1", content: "ok" }]));
+    expect(r?.kind === "tool_result" && r.images).toEqual([]);
+  });
+
+  test("a tool result carrying an image (Claude read a picture) exposes it", () => {
+    const e = parseConvLine(
+      user([
+        {
+          type: "tool_result",
+          tool_use_id: "t2",
+          content: [
+            { type: "text", text: "Read 1 image" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: PNG } },
+          ],
+        },
+      ]),
+    );
+    expect(e?.kind).toBe("tool_result");
+    if (e?.kind !== "tool_result") return;
+    expect(e.toolUseId).toBe("t2");
+    expect(e.text).toBe("Read 1 image");
+    expect(e.images).toEqual([{ mediaType: "image/png", data: PNG }]);
+  });
+});
