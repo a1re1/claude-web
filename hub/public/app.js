@@ -34,6 +34,8 @@
     showMeta: $("show-meta"),
     showSidechain: $("show-sidechain"),
     follow: $("follow"),
+    showEmpty: $("show-empty"),
+    emptyCount: $("empty-count"),
   };
 
   const state = {
@@ -61,6 +63,14 @@
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
     return `${Math.floor(s / 86400)}d ago`;
+  }
+  function fmtBytes(n) {
+    if (n == null) return "";
+    return n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.round(n / 1e6)} MB`;
+  }
+  // Alive but never used: no transcript, not started here. Hidden by default.
+  function isEmpty(s) {
+    return s.transcriptPath === null && !s.spawned;
   }
   function fmtNum(n) {
     return n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -116,15 +126,19 @@
   }
 
   function renderList() {
+    const empty = state.sessions.filter(isEmpty);
+    el.emptyCount.textContent = empty.length ? `(${empty.length}, ${fmtBytes(empty.reduce((a, s) => a + (s.memoryBytes || 0), 0))})` : "";
+    const shown = el.showEmpty.checked ? state.sessions : state.sessions.filter((s) => !isEmpty(s) || s.id === state.selected);
     el.list.replaceChildren(
-      ...state.sessions.map((s) => {
+      ...shown.map((s) => {
         const cls = ["", s.id === state.selected ? "active" : "", s.running ? "running" : "", s.busy ? "busy" : "", s.spawned && !s.running ? "exited" : ""].join(" ");
         const name = h("div", { class: "name", text: s.title || s.name || short(s.firstPrompt, 40) || s.id.slice(0, 8) });
         if (s.spawned) name.append(h("span", { class: "badge spawned", text: "claude-web" }));
         if (s.agentConnected) name.append(h("span", { class: "badge", text: "plugin" }));
         const n = (state.pending[s.id] || []).length;
         if (n) name.append(h("span", { class: "badge", text: `${n} permission${n > 1 ? "s" : ""}` }));
-        const sub = h("div", { class: "sub", text: `${shortCwd(s.cwd)} · ${s.busy ? "working" : s.running ? "idle" : s.spawned ? `exited${s.exitCode != null ? ` (${s.exitCode})` : ""}` : "past"} · ${ago(s.updatedAt)}` });
+        const mem = s.memoryBytes ? ` · ${fmtBytes(s.memoryBytes)}` : "";
+        const sub = h("div", { class: "sub", text: `${shortCwd(s.cwd)} · ${s.busy ? "working" : s.running ? "idle" : s.spawned ? `exited${s.exitCode != null ? ` (${s.exitCode})` : ""}` : "past"}${mem} · ${ago(s.updatedAt)}` });
         return h("li", { class: cls, title: s.id, onclick: () => select(s.id) }, h("span", { class: "dot" }), h("div", {}, name, sub));
       }),
     );
@@ -158,14 +172,18 @@
     el.send.disabled = !(canDrive || s.agentConnected);
     el.resume.hidden = s.running; // any session that is not running can be picked up here
     el.stop.disabled = !canDrive;
-    el.kill.disabled = !s.spawned;
-    el.kill.textContent = canDrive ? "Kill" : s.spawned ? "Remove" : "Kill";
+    const untouched = s.running && !s.spawned && !s.busy && s.transcriptPath === null; // mirrors the hub's rule
+    el.kill.disabled = !(s.spawned || untouched);
+    el.kill.textContent = canDrive || untouched ? "Kill" : s.spawned ? "Remove" : "Kill";
+    el.kill.title = untouched ? "This session has no conversation; ending it loses nothing (SIGTERM to its pid)." : "";
     el.msg.placeholder = canDrive
       ? "Message the session… (Enter to send, Shift+Enter for newline)"
       : s.agentConnected
         ? "Message via the channel plugin… (Enter to send)"
         : s.running
-          ? "This session was started outside claude-web; it is read-only here."
+          ? s.transcriptPath === null
+            ? "An unused session in another terminal: nothing has been typed into it yet. Kill it to free its memory."
+            : "This session was started outside claude-web; it is read-only here."
           : "This session is not running. Resume it to continue the conversation here.";
     if (!s.spawned && state.tab === "term") setTab("conv");
     renderPermissions();
@@ -237,6 +255,7 @@
     const pct = lastInput ? Math.min(100, Math.round((lastInput / MAX_CONTEXT_TOKENS) * 100)) : 0;
     const parts = [
       s.busy ? "● working" : s.running ? "○ idle" : s.spawned ? `■ exited${s.exitSignal ? ` (${s.exitSignal})` : s.exitCode != null ? ` (${s.exitCode})` : ""}` : "■ not running",
+      s.memoryBytes ? `memory ${fmtBytes(s.memoryBytes)}` : null,
       model ? `model ${model}` : null,
       `${turns} prompt${turns === 1 ? "" : "s"}`,
       `${tools} tool call${tools === 1 ? "" : "s"}`,
@@ -244,7 +263,7 @@
       out ? `output ${fmtNum(out)}` : null,
       `${state.entries.length} entries`,
     ];
-    el.status.replaceChildren(...parts.filter(Boolean).map((t, i) => h("span", { class: i === 4 && pct >= 80 ? "warn" : "", text: t })));
+    el.status.replaceChildren(...parts.filter(Boolean).map((t) => h("span", { class: t.startsWith("context") && pct >= 80 ? "warn" : "", text: t })));
   }
 
   /* -------------------------------- timeline -------------------------------- */
@@ -462,6 +481,15 @@
   });
   for (const b of document.querySelectorAll(".tab")) b.addEventListener("click", () => setTab(b.dataset.tab));
   for (const c of [el.showThinking, el.showMeta, el.showSidechain]) c.addEventListener("change", applyFilters);
+  try {
+    el.showEmpty.checked = localStorage.getItem("claude-web.showEmpty") === "1";
+  } catch {}
+  el.showEmpty.addEventListener("change", () => {
+    try {
+      localStorage.setItem("claude-web.showEmpty", el.showEmpty.checked ? "1" : "0");
+    } catch {}
+    renderList();
+  });
   el.conv.addEventListener("scroll", () => {
     // Scrolling up pauses follow; scrolling back to the bottom resumes it.
     const atBottom = el.conv.scrollHeight - el.conv.scrollTop - el.conv.clientHeight < 40;

@@ -37,8 +37,10 @@ Flags: `--port N` (default: first free port from 8790, or `CLAUDE_WEB_PORT`), `-
 ### The page
 
 - **Sessions rail** — every session whose working directory is the root or below it. Running
-  sessions come first; a pulsing dot means Claude is mid-turn. Sessions this `claude-web` started
-  carry a `claude-web` badge.
+  sessions come first with their resident memory; a pulsing dot means Claude is mid-turn. Sessions
+  this `claude-web` started carry a `claude-web` badge. Sessions that are alive but have never been
+  used (an unused terminal tab: no conversation yet) are hidden behind **show empty sessions**,
+  which also totals how much memory they hold.
 - **Conversation** — the full transcript, streamed as it grows, with Markdown rendering. Images
   pasted into a prompt or read by Claude are shown inline (click to toggle full size). Thinking,
   injected meta prompts, and subagent traffic are hidden behind toggles; tool calls and results
@@ -47,7 +49,9 @@ Flags: `--port N` (default: first free port from 8790, or `CLAUDE_WEB_PORT`), `-
   permission prompts, anything the transcript does not carry).
 - **Composer** — **Send** types the text plus Enter into the PTY. **Stop** sends Escape to
   interrupt the current turn. **Kill** sends SIGTERM (SIGKILL after 3 s). All three need a session
-  `claude-web` started; a session started from another terminal shows as read-only.
+  `claude-web` started; a session started from another terminal shows as read-only. The one
+  exception is Kill on an empty external session (idle, no conversation): the hub SIGTERMs it by
+  pid, since nothing can be lost.
 - **New session** — starts `claude --session-id <uuid> [--name …]` in the given directory
   (default: the root); an optional first prompt is typed once the input box appears.
 - **Resume** — on any session that is not running: relaunches it with `claude --resume <id>` in

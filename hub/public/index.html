@@ -14,6 +14,7 @@
         <h1>claude-web</h1>
         <span id="root" class="muted" title="launch directory"></span>
         <button id="new-toggle" class="primary">New session</button>
+        <label class="small rail-toggle" title="Sessions that are alive but have no conversation yet (an unused terminal tab)"><input type="checkbox" id="show-empty" /> show empty sessions <span id="empty-count" class="muted"></span></label>
       </header>
       <form id="new-form" hidden>
         <label>Directory <input name="cwd" placeholder="(launch directory)" /></label>

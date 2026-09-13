@@ -111,6 +111,7 @@ export const SessionInfoSchema = z.object({
   busy: z.boolean(), // registry status === "busy"
   pid: z.number().int().nullable(),
   name: z.string().nullable(), // registry name (also --name for spawned)
+  memoryBytes: z.number().nullable(), // resident set size of the live process
 });
 export type SessionInfo = z.infer<typeof SessionInfoSchema>;
 

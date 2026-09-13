@@ -53,6 +53,32 @@ export function readRegistry(home: string = os.homedir()): RegistryEntry[] {
   return entries;
 }
 
+// Resident set size in bytes for each pid that `ps` reports. One batched call
+// normally covers everything; macOS ps refuses the whole batch when any pid
+// is invalid, so pids the batch did not answer for are retried one by one
+// (a dead pid simply stays absent).
+export function readMemory(pids: number[]): Map<number, number> {
+  const out = new Map<number, number>();
+  if (pids.length === 0) return out;
+  psRss(pids, out);
+  const missing = pids.filter((pid) => !out.has(pid));
+  if (missing.length > 0 && missing.length < pids.length) return out; // batch worked; the rest are gone
+  for (const pid of missing) psRss([pid], out);
+  return out;
+}
+
+function psRss(pids: number[], into: Map<number, number>): void {
+  try {
+    const res = Bun.spawnSync(["ps", "-o", "pid=,rss=", "-p", pids.join(",")], { stdout: "pipe", stderr: "ignore", timeout: 2000 });
+    for (const line of res.stdout.toString().split("\n")) {
+      const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
+      if (m) into.set(Number(m[1]), Number(m[2]) * 1024); // ps reports KiB
+    }
+  } catch {
+    /* no ps (or it failed): memory stays unknown */
+  }
+}
+
 // Whether a process exists: kill(pid, 0) succeeds, or fails with EPERM (the
 // process exists but belongs to another user). ESRCH and anything else: no.
 function isAlive(pid: number): boolean {
@@ -252,7 +278,7 @@ export class SessionIndex {
         if (info !== null && isUnder(this.rootCwd, info.cwd)) byId.set(info.id, info);
       }
     }
-    this.mergeRegistry(byId);
+    await this.mergeRegistry(byId);
     const sessions = [...byId.values()].sort(compareSessions);
     this.sessions = sessions;
     for (const filePath of [...this.cache.keys()]) {
@@ -331,16 +357,18 @@ export class SessionIndex {
       busy: false,
       pid: null,
       name: null,
+      memoryBytes: null,
     };
   }
 
   // Merge alive registry entries whose cwd is under rootCwd: a matching
-  // transcript becomes running (with pid/name/busy); a live entry without a
-  // transcript yet appears as a transcript-less SessionInfo.
-  private mergeRegistry(byId: Map<string, SessionInfo>): void {
+  // transcript becomes running (with pid/name/busy/memory); a live entry
+  // without a transcript yet appears as a transcript-less SessionInfo.
+  private async mergeRegistry(byId: Map<string, SessionInfo>): Promise<void> {
     const live = readRegistry(this.home).filter(
       (entry) => entry.alive && isUnder(this.rootCwd, entry.cwd),
     );
+    const memory = readMemory(live.map((e) => e.pid));
     for (const entry of live) {
       const existing = byId.get(entry.sessionId);
       if (existing !== undefined) {
@@ -348,6 +376,7 @@ export class SessionIndex {
         existing.busy = entry.status === "busy";
         existing.pid = entry.pid;
         existing.name = entry.name;
+        existing.memoryBytes = memory.get(entry.pid) ?? null;
         if (this.cwdFallback.has(existing.id)) existing.cwd = entry.cwd;
       } else {
         byId.set(entry.sessionId, {
@@ -366,6 +395,7 @@ export class SessionIndex {
           busy: entry.status === "busy",
           pid: entry.pid,
           name: entry.name,
+          memoryBytes: memory.get(entry.pid) ?? null,
         });
       }
     }

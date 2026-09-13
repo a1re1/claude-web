@@ -11,7 +11,8 @@
 //   POST /api/sessions/:id/input      { data }  -> raw keystrokes (base64)
 //   POST /api/sessions/:id/resize     { cols, rows }
 //   POST /api/sessions/:id/permission { request_id, behavior }
-//   DELETE /api/sessions/:id          -> kill (running) / forget (exited)
+//   DELETE /api/sessions/:id          -> kill (running) / forget (exited); an
+//                                        untouched external idle session is SIGTERMed by pid
 //   WS   /agent                   optional channel plugin (hello first)
 //   WS   /ui                      browser: `sessions` first, then subscribe/history/entry/pty
 //
@@ -140,7 +141,15 @@ function infoFromSpawned(s: SpawnedInfo): SessionInfo {
     busy: false,
     pid: s.pid,
     name: s.name,
+    memoryBytes: null,
   };
+}
+
+// An external session nobody has used: alive, idle, and no transcript on
+// disk. Ending it loses nothing, which is the only case where the hub is
+// willing to signal a process it did not start.
+function isUntouched(s: Session): boolean {
+  return s.running && !s.spawned && !s.busy && s.transcriptPath === null && s.pid !== null;
 }
 
 export function createHub(opts: HubOptions) {
@@ -346,8 +355,17 @@ export function createHub(opts: HubOptions) {
       if (req.method === "DELETE") {
         const spawned = sessions.get(id);
         if (!spawned) {
-          await getSession(id); // 404 when unknown
-          throw new HttpError(409, "this session was not started by claude-web; exit it from its own terminal");
+          const session = await getSession(id); // 404 when unknown
+          if (!isUntouched(session)) {
+            throw new HttpError(409, "this session was not started by claude-web and has a conversation; exit it from its own terminal");
+          }
+          try {
+            process.kill(session.pid!, "SIGTERM");
+          } catch {
+            throw new HttpError(409, "process already gone");
+          }
+          void pushSessions(true);
+          return json({ ok: true, action: "killed", external: true });
         }
         if (spawned.status === "running") {
           sessions.kill(id);

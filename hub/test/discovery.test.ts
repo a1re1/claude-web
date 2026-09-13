@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { encodeProjectDir } from "../src/conversation";
-import { SessionIndex, isUnder, readRegistry } from "../src/discovery";
+import { SessionIndex, isUnder, readMemory, readRegistry } from "../src/discovery";
 
 const fixture = fs.readFileSync(path.join(import.meta.dir, "fixtures", "transcript.jsonl"), "utf8");
 
@@ -57,6 +57,16 @@ describe("readRegistry", () => {
   });
 });
 
+describe("readMemory", () => {
+  test("reports resident memory for live pids and omits dead or invalid ones", () => {
+    // 2147483000 makes macOS ps reject the whole batch; the live pid must still be answered.
+    const mem = readMemory([process.pid, 2147483000]);
+    expect(mem.get(process.pid)).toBeGreaterThan(1_000_000);
+    expect(mem.has(2147483000)).toBe(false);
+    expect(readMemory([]).size).toBe(0);
+  });
+});
+
 describe("SessionIndex", () => {
   test("lists transcripts under the root (including worktree-style dirs) merged with the live registry", async () => {
     const { home, root } = fakeHome();
@@ -106,15 +116,19 @@ describe("SessionIndex", () => {
     expect(b.startedAt).toBe(Date.parse("2026-09-12T10:00:00.000Z"));
 
     const e = index.get("eee")!;
+    expect(e.memoryBytes).toBeGreaterThan(0); // live process: ps knows its size
+    expect(a.memoryBytes).toBeNull(); // not running
     expect(e.transcriptPath).toBeNull();
     expect(e.title).toBe("fresh");
     expect(e.running).toBe(true);
     expect(e.pid).toBe(process.ppid);
     expect(e.busy).toBe(false);
 
-    // Unchanged files are served from the cache and come back equal.
+    // Unchanged files are served from the cache and come back equal
+    // (memory is re-read live each time, so compare everything else).
+    const strip = (l: typeof list) => l.map(({ memoryBytes: _m, ...rest }) => rest);
     const again = await index.refresh();
-    expect(again).toEqual(list);
+    expect(strip(again)).toEqual(strip(list));
   });
 
   test("large transcripts are scanned in head/tail windows", async () => {

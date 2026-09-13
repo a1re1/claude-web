@@ -81,6 +81,7 @@ input, textarea {
 .rail-head { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
 .rail-head h1 { margin: 0; font-size: 16px; }
 #root { font-family: var(--mono); font-size: 11px; word-break: break-all; }
+.rail-toggle { display: flex; align-items: center; gap: 4px; cursor: pointer; }
 #new-form { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 #new-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 #sessions { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }

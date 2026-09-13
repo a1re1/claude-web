@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeProjectDir } from "../src/conversation";
@@ -230,6 +230,36 @@ describe("hub HTTP API", () => {
     const removed = await fetch(`${base}/api/sessions/${s.id}`, { method: "DELETE" });
     expect(await removed.json()).toEqual({ ok: true, action: "removed" });
     expect((await fetch(`${base}/api/sessions/${s.id}`)).status).toBe(404);
+  });
+
+  test("an untouched external idle session can be killed by pid; anything with a conversation cannot", async () => {
+    // Two "external" claude processes: one idle with no transcript, one busy.
+    const idle = Bun.spawn(["sleep", "60"]);
+    const busy = Bun.spawn(["sleep", "60"]);
+    const reg = (pid: number, sessionId: string, status: string) =>
+      writeFileSync(join(home, ".claude", "sessions", `${pid}.json`), JSON.stringify({ pid, sessionId, cwd: root, status, kind: "interactive", startedAt: 1, updatedAt: 2 }));
+    reg(idle.pid, "ext-idle", "idle");
+    reg(busy.pid, "ext-busy", "busy");
+    reg(process.pid, PAST_ID, "idle"); // has a transcript: protected even when idle
+    try {
+      let listed: any[] = [];
+      await waitFor(() => {
+        void hub.listSessions().then((l) => (listed = l));
+        return listed.some((s) => s.id === "ext-idle") && listed.some((s) => s.id === "ext-busy");
+      });
+      expect(listed.find((s) => s.id === "ext-idle").memoryBytes).toBeGreaterThan(0);
+      expect((await fetch(`${base}/api/sessions/ext-busy`, { method: "DELETE" })).status).toBe(409);
+      expect((await fetch(`${base}/api/sessions/${PAST_ID}`, { method: "DELETE" })).status).toBe(409);
+      const r = await fetch(`${base}/api/sessions/ext-idle`, { method: "DELETE" });
+      expect(await r.json()).toEqual({ ok: true, action: "killed", external: true });
+      await idle.exited;
+      expect(idle.signalCode === "SIGTERM" || idle.exitCode === 143).toBe(true);
+      expect(busy.exitCode).toBeNull(); // still running
+    } finally {
+      for (const pid of [idle.pid, busy.pid, process.pid]) rmSync(join(home, ".claude", "sessions", `${pid}.json`), { force: true });
+      idle.kill();
+      busy.kill();
+    }
   });
 
   test("resume relaunches a past session under the hub's PTY with the same id", async () => {
