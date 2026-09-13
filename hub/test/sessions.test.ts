@@ -154,6 +154,28 @@ describe("SessionManager", () => {
     expect(() => m.spawn({ cwd: join(real, "does-not-exist") })).toThrow();
   });
 
+  test("resume reuses the id, replaces an exited record, and refuses a running one", async () => {
+    const seen: Array<{ id: string; resume: boolean }> = [];
+    const m = new SessionManager({
+      spawnCommand: (id, _name, o) => {
+        seen.push({ id, resume: o.resume });
+        return ["cat"];
+      },
+      hubUrl: "ws://127.0.0.1:1",
+    });
+    managers.push(m);
+    const first = m.spawn({ cwd: tmpdir() });
+    expect(seen[0]).toEqual({ id: first.id, resume: false });
+    expect(() => m.spawn({ cwd: tmpdir(), resume: first.id })).toThrow(/already running/);
+    m.kill(first.id);
+    await waitFor(() => m.get(first.id)?.status === "exited");
+    const again = m.spawn({ cwd: tmpdir(), resume: first.id });
+    expect(again.id).toBe(first.id);
+    expect(again.status).toBe("running");
+    expect(seen[1]).toEqual({ id: first.id, resume: true });
+    expect(m.list().filter((s) => s.id === first.id).length).toBe(1);
+  });
+
   test("unknown ids throw", () => {
     const m = make();
     expect(() => m.stop("nope")).toThrow(/no such session/);
@@ -164,6 +186,7 @@ describe("defaultSpawnCommand", () => {
   test("loads the channel plugin only when asked", async () => {
     const { defaultSpawnCommand } = await import("../src/sessions");
     expect(defaultSpawnCommand("id1", null, undefined)).toEqual(["claude", "--session-id", "id1"]);
+    expect(defaultSpawnCommand("id1", null, undefined, { resume: true })).toEqual(["claude", "--resume", "id1"]);
     expect(defaultSpawnCommand("id1", "nm", "plugin:claude-web@claude-web")).toEqual([
       "claude",
       "--session-id",

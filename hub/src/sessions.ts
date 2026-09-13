@@ -113,6 +113,12 @@ export function childEnv(base: NodeJS.ProcessEnv = process.env): Record<string, 
   return env;
 }
 
+export interface SpawnCommandOptions {
+  // Continue an existing session (`claude --resume <id>`, same id and
+  // transcript) instead of starting a fresh one with that id.
+  resume: boolean;
+}
+
 // The default `claude` invocation. The channel plugin is opt-in: set
 // CLAUDE_WEB_CHANNEL (e.g. plugin:claude-web@claude-web or server:claude-web)
 // to load it for Allow/Deny buttons in the UI; without it the hub drives the
@@ -121,8 +127,9 @@ export function defaultSpawnCommand(
   id: string,
   name: string | null,
   channel: string | undefined = process.env.CLAUDE_WEB_CHANNEL,
+  opts: SpawnCommandOptions = { resume: false },
 ): string[] {
-  const cmd = ["claude", "--session-id", id];
+  const cmd = ["claude", opts.resume ? "--resume" : "--session-id", id];
   if (channel) cmd.push("--dangerously-load-development-channels", channel);
   if (name != null) cmd.push("--name", name);
   return cmd;
@@ -136,8 +143,8 @@ export interface SessionManagerOptions {
   // Shared secret handed to spawned sessions as CLAUDE_WEB_TOKEN.
   agentToken?: string;
   // Injectable spawn command; default is the real Claude Code invocation.
-  // Called with (id, name) so tests can substitute `cat`-like processes.
-  spawnCommand?: (id: string, name: string | null) => string[];
+  // Called with (id, name, opts) so tests can substitute `cat`-like processes.
+  spawnCommand?: (id: string, name: string | null, opts: SpawnCommandOptions) => string[];
 }
 
 export class SessionManager {
@@ -145,22 +152,38 @@ export class SessionManager {
   private readonly listeners = new Set<(event: SessionEvent) => void>();
   private readonly hubUrl: string;
   private readonly agentToken: string | undefined;
-  private readonly spawnCommand: (id: string, name: string | null) => string[];
+  private readonly spawnCommand: (id: string, name: string | null, opts: SpawnCommandOptions) => string[];
 
   constructor(opts: SessionManagerOptions = {}) {
     this.hubUrl = opts.hubUrl ?? process.env.CLAUDE_WEB_HUB ?? DEFAULT_HUB_URL;
     this.agentToken = opts.agentToken;
-    this.spawnCommand = opts.spawnCommand ?? ((id, name) => defaultSpawnCommand(id, name));
+    this.spawnCommand = opts.spawnCommand ?? ((id, name, o) => defaultSpawnCommand(id, name, undefined, o));
   }
 
   /* --------------------------------- lifecycle ------------------------------- */
 
-  spawn({ cwd: rawCwd, name, prompt }: { cwd: string; name?: string | null; prompt?: string | null }): SpawnedInfo {
+  // Start a fresh session, or with `resume` continue the session with that id
+  // in place (its transcript keeps growing under the same id). An exited
+  // record for the same id is replaced.
+  spawn({
+    cwd: rawCwd,
+    name,
+    prompt,
+    resume,
+  }: {
+    cwd: string;
+    name?: string | null;
+    prompt?: string | null;
+    resume?: string | null;
+  }): SpawnedInfo {
     // Claude Code keys its transcript directory on the resolved cwd
     // (/tmp/x -> /private/tmp/x on macOS), so resolve it here too or the
     // conversation would be looked up under the wrong project directory.
     const cwd = realpathSync(rawCwd);
-    const id = randomUUID();
+    const id = resume ?? randomUUID();
+    const prev = this.sessions.get(id);
+    if (prev?.status === "running") throw new Error(`session ${id} is already running`);
+    if (prev) this.remove(id);
     const rec: SessionRecord = {
       id,
       name: name ?? null,
@@ -177,7 +200,7 @@ export class SessionManager {
 
     let proc: Bun.Subprocess<"ignore", "ignore", "ignore">;
     try {
-      proc = Bun.spawn(this.spawnCommand(id, rec.name), {
+      proc = Bun.spawn(this.spawnCommand(id, rec.name, { resume: resume != null }), {
         cwd,
         env: {
           ...childEnv(),

@@ -53,6 +53,7 @@ beforeAll(() => {
   home = mkdtempSync(join(tmpdir(), "cw-home-"));
   root = realpathSync(mkdtempSync(join(tmpdir(), "cw-root-")));
   mkdirSync(join(home, ".claude", "sessions"), { recursive: true });
+  mkdirSync(join(root, "sub")); // resume spawns in the session's own directory, so it must exist
   writeTranscript(join(root, "sub"), PAST_ID, "past prompt");
   writeTranscript(join(home, "elsewhere"), OUTSIDE_ID, "outside prompt"); // a sibling of root, never under it
   hub = createHub({
@@ -229,6 +230,28 @@ describe("hub HTTP API", () => {
     const removed = await fetch(`${base}/api/sessions/${s.id}`, { method: "DELETE" });
     expect(await removed.json()).toEqual({ ok: true, action: "removed" });
     expect((await fetch(`${base}/api/sessions/${s.id}`)).status).toBe(404);
+  });
+
+  test("resume relaunches a past session under the hub's PTY with the same id", async () => {
+    const r = await post(`/api/sessions/${PAST_ID}/resume`);
+    expect(r.status).toBe(201);
+    const s = await r.json();
+    expect(s.id).toBe(PAST_ID);
+    expect(s.spawned).toBe(true);
+    expect(s.running).toBe(true);
+    expect(s.cwd).toBe(join(root, "sub")); // the session's own directory, not the root
+    expect(s.firstPrompt).toBe("past prompt"); // history is still there
+    expect((await post(`/api/sessions/${PAST_ID}/resume`)).status).toBe(409);
+    expect((await post(`/api/sessions/${PAST_ID}/message`, { text: "resumed" })).status).toBe(200);
+    await waitFor(() => Buffer.from(hub.sessions.ring(PAST_ID)!).toString("utf8").includes("resumed"));
+    expect((await post(`/api/sessions/nope/resume`)).status).toBe(404);
+    await fetch(`${base}/api/sessions/${PAST_ID}`, { method: "DELETE" });
+    await waitFor(() => hub.sessions.get(PAST_ID)?.status === "exited");
+    // Back to a past session that can be resumed again.
+    expect((await post(`/api/sessions/${PAST_ID}/resume`)).status).toBe(201);
+    await fetch(`${base}/api/sessions/${PAST_ID}`, { method: "DELETE" });
+    await waitFor(() => hub.sessions.get(PAST_ID)?.status === "exited");
+    hub.sessions.remove(PAST_ID);
   });
 
   test("subscribed UI socket gets history, live entries and pty bytes", async () => {

@@ -26,6 +26,7 @@
     xterm: $("xterm"),
     msg: $("msg"),
     send: $("send"),
+    resume: $("resume"),
     stop: $("stop"),
     kill: $("kill"),
     status: $("status-bar"),
@@ -155,6 +156,7 @@
     const canDrive = s.spawned && s.running;
     el.tabTerm.hidden = !s.spawned;
     el.send.disabled = !(canDrive || s.agentConnected);
+    el.resume.hidden = s.running; // any session that is not running can be picked up here
     el.stop.disabled = !canDrive;
     el.kill.disabled = !s.spawned;
     el.kill.textContent = canDrive ? "Kill" : s.spawned ? "Remove" : "Kill";
@@ -164,7 +166,7 @@
         ? "Message via the channel plugin… (Enter to send)"
         : s.running
           ? "This session was started outside claude-web; it is read-only here."
-          : "This session is not running.";
+          : "This session is not running. Resume it to continue the conversation here.";
     if (!s.spawned && state.tab === "term") setTab("conv");
     renderPermissions();
     renderStatus();
@@ -403,6 +405,19 @@
     if (ev.key === "Enter" && !ev.shiftKey) {
       ev.preventDefault();
       sendMessage();
+    }
+  });
+  el.resume.addEventListener("click", async () => {
+    const s = current();
+    if (!s) return;
+    el.resume.disabled = true;
+    try {
+      await api("POST", `/api/sessions/${encodeURIComponent(s.id)}/resume`);
+      setTab("term"); // startup dialogs, if any, show up here first
+    } catch (err) {
+      toast(`resume: ${err.message}`);
+    } finally {
+      el.resume.disabled = false;
     }
   });
   el.stop.addEventListener("click", async () => {

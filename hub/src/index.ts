@@ -5,6 +5,7 @@
 //   GET  /api/sessions            every session under the root (running first)
 //   POST /api/sessions            { cwd?, name?, prompt? } -> start claude under a PTY
 //   GET  /api/sessions/:id        { session, entries, truncated, pending }
+//   POST /api/sessions/:id/resume               -> claude --resume <id> in its cwd, under a PTY
 //   POST /api/sessions/:id/message    { text }  -> typed into the PTY (or a channel message)
 //   POST /api/sessions/:id/stop                 -> Escape into the PTY
 //   POST /api/sessions/:id/input      { data }  -> raw keystrokes (base64)
@@ -361,6 +362,21 @@ export function createHub(opts: HubOptions) {
     if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 
     switch (action) {
+      case "resume": {
+        const session = await getSession(id); // 404 when unknown
+        if (session.running) {
+          throw new HttpError(409, session.spawned ? "session is already running" : "session is running in another terminal; exit it there first");
+        }
+        let spawned: SpawnedInfo;
+        try {
+          spawned = sessions.spawn({ cwd: session.cwd, name: session.name, resume: id });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") throw new HttpError(409, `directory no longer exists: ${session.cwd}`);
+          throw err;
+        }
+        pending.delete(id);
+        return json(merge(index.get(id) ?? infoFromSpawned(spawned), spawned), 201);
+      }
       case "message": {
         const { text } = await parseBody(req, MessageBodySchema);
         const spawned = sessions.get(id);

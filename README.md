@@ -48,6 +48,9 @@ Flags: `--port N` (default: first free port from 8790, or `CLAUDE_WEB_PORT`), `-
   `claude-web` started; a session started from another terminal shows as read-only.
 - **New session** — starts `claude --session-id <uuid> [--name …]` in the given directory
   (default: the root); an optional first prompt is typed once the input box appears.
+- **Resume** — on any session that is not running: relaunches it with `claude --resume <id>` in
+  its own directory under claude-web's PTY. Same id, same transcript, and from then on Send, Stop,
+  Kill and the Terminal tab work for it.
 - **Status bar** — state, model, prompt and tool-call counts, input context of the latest call as
   a share of `CLAUDE_WEB_MAX_CONTEXT_TOKENS` (1M by default), and output tokens.
 
@@ -118,5 +121,7 @@ entries, tailer), `hub/src/sessions.ts` (PTY processes), `hub/src/index.ts` (HTT
 - **A session is missing from the rail** — its working directory is outside the root; run
   `claude-web --root` higher up, or from `~` to see everything.
 - **Send is disabled** — the session was not started by this `claude-web` and has no plugin attached.
+  If it is not running, **Resume** picks it up here; if it is running in another terminal, it keeps
+  its own stdin, so exit it there first or use the plugin.
 - **Spawned session shows a consent dialog** — switch to the Terminal tab and answer it there;
   that happens the first time a project loads the plugin.
