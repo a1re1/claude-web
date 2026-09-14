@@ -1,0 +1,6 @@
+{
+  "name": "claude-web",
+  "description": "Channel plugin that bridges a Claude Code session to the claude-web hub over WebSocket: chat messages, permission prompts, stop/steer.",
+  "version": "0.1.0",
+  "keywords": ["claude", "channel", "web", "permissions", "claude-code"]
+}

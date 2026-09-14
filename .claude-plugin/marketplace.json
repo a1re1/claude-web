@@ -1,0 +1,13 @@
+{
+  "name": "claude-web",
+  "owner": {
+    "name": "claude-web"
+  },
+  "plugins": [
+    {
+      "name": "claude-web",
+      "source": "./plugin",
+      "description": "Channel plugin + web hub that lets a browser observe and steer running Claude Code sessions."
+    }
+  ]
+}

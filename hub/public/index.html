@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>claude-web</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 16 16%27%3E%3Crect width=%2716%27 height=%2716%27 rx=%275%27 fill=%27%233b7ce6%27/%3E%3Ctext x=%278%27 y=%2712%27 font-size=%2711%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27monospace%27%3E%E2%9D%AF%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/vendor/xterm.css" />
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="content">
+        <!-- floating header -->
+        <header id="top">
+          <div class="top-left">
+            <button class="iconbtn" id="new-toggle" title="New Session" aria-label="New Session"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></button>
+          </div>
+          <button id="pill" class="pill" hidden title="Sessions">
+            <span class="pill-title"><span class="dot" id="pill-dot"></span><span id="pill-name"></span><svg viewBox="0 0 24 24" class="chev"><path d="m9 18 6-6-6-6"/></svg></span>
+            <span class="pill-status" id="pill-status"></span>
+          </button>
+          <div class="top-right">
+            <button class="iconbtn" id="stop" title="Stop the current turn" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg></button>
+            <button class="iconbtn" id="inspector-toggle" title="Details" aria-label="Toggle Details" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 12h.01M3 18h.01M3 6h.01M8 12h13M8 18h13M8 6h13"/></svg></button>
+          </div>
+        </header>
+
+        <!-- turn rail: hover a tick to peek, click to jump -->
+        <div id="turn-rail">
+          <div id="ticks"></div>
+          <div id="peek" class="peek" hidden>
+            <div class="peek-head"><span id="peek-label"></span><span id="peek-time"></span></div>
+            <div class="peek-title" id="peek-title"></div>
+            <div class="peek-excerpt" id="peek-excerpt"></div>
+          </div>
+        </div>
+
+        <!-- stream -->
+        <div id="stream">
+          <div id="column">
+            <div id="empty" class="empty">Choose a session from the list, or start a new one.</div>
+            <div id="truncated" class="sep" hidden>Older entries were omitted to keep the page light</div>
+            <div id="timeline"></div>
+            <div id="live" class="live" hidden><span class="dot accent"></span><span id="live-text"></span></div>
+          </div>
+        </div>
+        <div id="term" hidden><div id="xterm"></div></div>
+
+        <!-- composer -->
+        <div id="composer-wrap">
+          <div id="perm-banner" hidden></div>
+          <div id="composer">
+            <textarea id="msg" rows="1" placeholder="Message the session"></textarea>
+            <div class="bar">
+              <button class="chip" id="chip-term" hidden><svg viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></svg><span>Terminal</span></button>
+              <button class="chip accent" id="resume" hidden><svg viewBox="0 0 24 24"><path d="M6 3l14 9-14 9V3z"/></svg><span>Resume</span></button>
+              <button class="chip danger" id="kill" hidden><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg><span>Kill</span></button>
+              <span class="spacer"></span>
+              <span id="model-chip" class="caption"></span>
+              <span id="draft-count" class="caption"></span>
+              <button class="iconbtn sm" id="send" title="Send" aria-label="Send"><svg viewBox="0 0 24 24" class="ic-send"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg><svg viewBox="0 0 24 24" class="ic-pause"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- inspector -->
+      <aside id="inspector" hidden>
+        <div class="seg-wrap"><div class="seg" role="tablist"><button data-pane="details" aria-pressed="true">Details</button><button data-pane="sessions" aria-pressed="false">Sessions</button></div></div>
+
+        <div id="pane-sessions" class="pane" hidden>
+          <div class="root caption" id="root" title="launch directory"></div>
+          <div id="session-groups"></div>
+          <label class="toggle caption"><input type="checkbox" id="show-empty" /> Show empty sessions <span id="empty-count"></span></label>
+        </div>
+
+        <div id="pane-details" class="pane">
+          <section>
+            <div class="section-title">Session</div>
+            <div class="grid" id="detail-run"></div>
+          </section>
+          <section>
+            <div class="section-title">Context</div>
+            <div class="ctx-row"><span class="mono" id="ctx-text">0 / 1.0M</span><span class="muted" id="ctx-pct">0%</span></div>
+            <div class="ctx-bar"><div id="ctx-fill"></div></div>
+          </section>
+          <section>
+            <div class="section-title">Usage</div>
+            <div class="grid" id="detail-usage"></div>
+          </section>
+          <section>
+            <div class="section-title">Transcript</div>
+            <div class="toggles">
+              <label class="toggle"><input type="checkbox" id="show-thinking" /> Show thinking</label>
+              <label class="toggle"><input type="checkbox" id="show-meta" /> Show injected context</label>
+              <label class="toggle"><input type="checkbox" id="show-sidechain" /> Show subagents</label>
+              <label class="toggle"><input type="checkbox" id="follow" checked /> Follow new entries</label>
+            </div>
+          </section>
+          <div class="caption mono" id="detail-foot"></div>
+        </div>
+      </aside>
+    </div>
+
+    <dialog id="new-dialog">
+      <form id="new-form" method="dialog">
+        <div class="dialog-title">New Session</div>
+        <div class="caption mono" id="new-root"></div>
+        <label>Directory <input name="cwd" placeholder="launch directory" /></label>
+        <label>Name <input name="name" placeholder="optional" /></label>
+        <label>First prompt <textarea name="prompt" rows="3" placeholder="optional, typed once the session is ready"></textarea></label>
+        <div class="dialog-actions">
+          <button type="button" id="new-cancel">Cancel</button>
+          <button type="submit" class="primary">Start</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/vendor/xterm.js"></script>
+    <script src="/vendor/xterm-addon-fit.js"></script>
+    <script src="/markdown.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>

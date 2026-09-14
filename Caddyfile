@@ -1,0 +1,18 @@
+# Caddy front door for the claude-web hub.
+#
+#   CLAUDE_WEB_PASSWORD_HASH="$(caddy hash-password --plaintext 'your-password')" \
+#   CLAUDE_WEB_DOMAIN=claude.example.com caddy run
+#
+# For a real domain Caddy provisions TLS automatically. For local use keep the
+# default (localhost) — Caddy serves https://localhost with a self-signed cert,
+# or set CLAUDE_WEB_DOMAIN=http://localhost for plain HTTP.
+# WebSockets (/ui and /agent) need no extra configuration in Caddy 2.
+# Keep the hub itself bound to 127.0.0.1: this basic_auth is the only
+# authentication in the stack, and a hub bound to 0.0.0.0 would bypass it.
+
+{$CLAUDE_WEB_DOMAIN:localhost} {
+	basic_auth {
+		{$CLAUDE_WEB_USER:claude} {$CLAUDE_WEB_PASSWORD_HASH}
+	}
+	reverse_proxy 127.0.0.1:{$CLAUDE_WEB_PORT:8790}
+}
