@@ -492,9 +492,17 @@
         hint = e.text;
         break;
       case "system":
-        label = "SYSTEM";
-        color = "var(--text-tertiary)";
-        hint = `${e.subtype} — ${e.text}`;
+        if (e.subtype === "task-notification") {
+          // A background task ended; level carries its status.
+          label = "TASK";
+          color = e.level === "completed" ? "var(--green)" : e.level ? "var(--red)" : "var(--text-tertiary)";
+          hint = e.text;
+          metaText = e.level || "";
+        } else {
+          label = "SYSTEM";
+          color = "var(--text-tertiary)";
+          hint = e.subtype === "notice" ? e.text : `${e.subtype} — ${e.text}`;
+        }
         break;
       case "compact":
         label = "COMPACT";

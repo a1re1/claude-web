@@ -49,6 +49,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Claude Code files some of its own notices as user records: when a
+// background task finishes it appends a `<task-notification>` block with
+// promptSource "system" and origin {kind: "task-notification"}. They are not
+// prompts the person typed, so they become system entries: subtype is the
+// origin kind, level the task status, text the human-readable summary.
+function harnessNotice(record: Record<string, unknown>, text: string): { subtype: string; level: string | null; text: string } | null {
+  const origin = isRecord(record.origin) && typeof record.origin.kind === "string" ? record.origin.kind : null;
+  const fromSystem = record.promptSource === "system" || origin === "task-notification" || /^\s*<task-notification>/.test(text);
+  if (!fromSystem || origin === "human") return null;
+  const field = (name: string): string | null => {
+    const m = new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text);
+    return m ? m[1]!.trim() : null;
+  };
+  const summary = field("summary");
+  return {
+    subtype: origin ?? "notice",
+    level: field("status"),
+    text: summary ?? text,
+  };
+}
+
 // Text blocks joined with "\n" plus any inline base64 images, from a content
 // block list. Blocks of other types (documents, unknown future kinds) are
 // skipped rather than sinking the whole record, so a prompt that carries a
@@ -150,6 +171,8 @@ function buildEntry(record: Record<string, unknown>): ConvEntry | null {
     } else if (typeof content !== "string") return null;
     const { text, images } = textAndImages(content);
     if (!text && images.length === 0) return null;
+    const notice = harnessNotice(record, text);
+    if (notice !== null) return { kind: "system", ...base, ...notice };
     return { kind: "prompt", ...base, text, meta: record.isMeta === true, images };
   }
 

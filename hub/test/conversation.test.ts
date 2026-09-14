@@ -559,3 +559,26 @@ describe("parseConvLine with inline images", () => {
     expect(e.images).toEqual([{ mediaType: "image/png", data: PNG }]);
   });
 });
+
+describe("harness notices filed as user records", () => {
+  const notice = "<task-notification>\n<task-id>b9fitvgky</task-id>\n<status>completed</status>\n<summary>Background command \"Run the build\" completed (exit code 0)</summary>\n</task-notification>";
+
+  test("a task notification becomes a system entry, not a prompt", () => {
+    const e = parseConvLine(userLine({ message: { role: "user", content: notice }, promptSource: "system", origin: { kind: "task-notification" } }));
+    expect(e?.kind).toBe("system");
+    if (e?.kind !== "system") return;
+    expect(e.subtype).toBe("task-notification");
+    expect(e.level).toBe("completed");
+    expect(e.text).toBe('Background command "Run the build" completed (exit code 0)');
+  });
+
+  test("older records without promptSource are recognised by the tag", () => {
+    const e = parseConvLine(userLine({ message: { role: "user", content: notice } }));
+    expect(e?.kind).toBe("system");
+  });
+
+  test("a typed prompt stays a prompt even when it mentions the tag", () => {
+    const e = parseConvLine(userLine({ message: { role: "user", content: "what is <task-notification>?" }, promptSource: "typed", origin: { kind: "human" } }));
+    expect(e?.kind).toBe("prompt");
+  });
+});

@@ -47,9 +47,10 @@ whatever its directory), `--open` (launch the browser).
   used (an unused terminal tab: no conversation yet) are hidden behind **show empty sessions**,
   which also totals how much memory they hold.
 - **Conversation** — the full transcript, streamed as it grows, with Markdown rendering. Images
-  pasted into a prompt or read by Claude are shown inline (click to toggle full size). Thinking,
-  injected meta prompts, and subagent traffic are hidden behind toggles; tool calls and results
-  are collapsible.
+  pasted into a prompt or read by Claude are shown inline (click to toggle full size). Notices
+  Claude Code files as user records (a background task finishing) show as `TASK` rows, not as
+  your prompts. Thinking, injected meta prompts, and subagent traffic are hidden behind toggles;
+  tool calls and results are collapsible.
 - **Terminal** — an xterm view of the PTY, for sessions `claude-web` started (startup dialogs,
   permission prompts, anything the transcript does not carry).
 - **Composer** — **Send** types the text plus Enter into the PTY. **Stop** sends Escape to
