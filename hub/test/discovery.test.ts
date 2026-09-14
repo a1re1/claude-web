@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { encodeProjectDir } from "../src/conversation";
-import { SessionIndex, isUnder, readMemory, readRegistry } from "../src/discovery";
+import { SessionIndex, inScope, isUnder, readMemory, readRegistry } from "../src/discovery";
 
 const fixture = fs.readFileSync(path.join(import.meta.dir, "fixtures", "transcript.jsonl"), "utf8");
 
@@ -38,6 +38,16 @@ describe("isUnder", () => {
     expect(isUnder("/a/b", "/a/b/c")).toBe(true);
     expect(isUnder("/a/b", "/a/bc")).toBe(false);
     expect(isUnder("/a/b", "/a")).toBe(false);
+  });
+});
+
+describe("inScope", () => {
+  test("cwd is exact, tree is the subtree, all is everything", () => {
+    expect(inScope("cwd", "/a/b", "/a/b")).toBe(true);
+    expect(inScope("cwd", "/a/b", "/a/b/c")).toBe(false);
+    expect(inScope("tree", "/a/b", "/a/b/c")).toBe(true);
+    expect(inScope("tree", "/a/b", "/a/bc")).toBe(false);
+    expect(inScope("all", "/a/b", "/zzz")).toBe(true);
   });
 });
 
@@ -89,9 +99,16 @@ describe("SessionIndex", () => {
     registry(home, process.pid + 100000, "aaa", root, { status: "idle" }); // dead pid: not running
     registry(home, process.ppid, "eee", root, { status: "idle", name: "fresh" }); // alive (parent), no transcript yet
 
-    const index = new SessionIndex({ rootCwd: root, home });
+    const index = new SessionIndex({ rootCwd: root, scope: "tree", home });
     const list = await index.refresh();
     expect(list.map((s) => s.id)).toEqual(["bbb", "eee", "aaa"]); // running first, then newest; ccc/ddd/fff excluded
+
+    // The default scope is the root directory alone: the worktree session drops out.
+    const only = await new SessionIndex({ rootCwd: root, home }).refresh();
+    expect(only.map((s) => s.id)).toEqual(["eee", "aaa"]);
+    // "all" ignores the directory entirely.
+    const all = await new SessionIndex({ rootCwd: root, scope: "all", home }).refresh();
+    expect(all.map((s) => s.id).sort()).toEqual(["aaa", "bbb", "ccc", "ddd", "eee", "fff"]);
 
     const a = index.get("aaa")!;
     expect(a.running).toBe(false);

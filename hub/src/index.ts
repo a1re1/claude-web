@@ -20,11 +20,12 @@
 // started elsewhere are observed through their transcript on disk.
 
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { join } from "node:path";
 import type { ServerWebSocket } from "bun";
 import { z } from "zod";
 import { ConversationTailer, readConversation, transcriptPath } from "./conversation";
-import { SessionIndex } from "./discovery";
+import { SessionIndex, inScope, type Scope } from "./discovery";
 import {
   AgentHelloSchema,
   AgentToHubSchema,
@@ -66,8 +67,11 @@ type Ws = ServerWebSocket<WsData>;
 export interface HubOptions {
   port: number;
   hostname: string;
-  // Directory whose sessions (and subdirectories' sessions) are listed.
+  // Directory whose sessions are listed, and where new ones start.
   rootCwd: string;
+  // "cwd" (default): only sessions in rootCwd itself; "tree": rootCwd and
+  // below; "all": every session on the machine.
+  scope?: Scope;
   // ~ override for tests (transcripts live under <home>/.claude).
   home?: string;
   sessions?: SessionManager;
@@ -156,7 +160,8 @@ export function createHub(opts: HubOptions) {
   const pending = new Map<string, PendingPermission[]>();
   const agents = new Map<string, Ws>();
   const uis = new Set<Ws>();
-  const index = new SessionIndex({ rootCwd: opts.rootCwd, home: opts.home });
+  const scope: Scope = opts.scope ?? "cwd";
+  const index = new SessionIndex({ rootCwd: opts.rootCwd, scope, home: opts.home });
   let sessions: SessionManager;
   let lastList = ""; // JSON of the last broadcast list, to skip no-op refreshes
 
@@ -316,7 +321,7 @@ export function createHub(opts: HubOptions) {
     }
 
     if (req.method === "GET" && path === "/health") return json({ ok: true });
-    if (req.method === "GET" && path === "/api/root") return json({ root: opts.rootCwd });
+    if (req.method === "GET" && path === "/api/root") return json({ root: opts.rootCwd, scope });
 
     if (req.method === "GET" && path in STATIC) {
       const file = Bun.file(STATIC[path]!);
@@ -329,8 +334,18 @@ export function createHub(opts: HubOptions) {
       if (req.method === "POST") {
         const body = await parseBody(req, CreateSessionBodySchema);
         let spawned: SpawnedInfo;
+        let cwd = opts.rootCwd;
+        if (body.cwd !== undefined) {
+          try {
+            cwd = realpathSync(body.cwd);
+          } catch {
+            throw new HttpError(400, "no such directory");
+          }
+          // A session started outside the scope would never show up here.
+          if (!inScope(scope, opts.rootCwd, cwd)) throw new HttpError(400, `directory is outside this claude-web's scope (${scope === "cwd" ? opts.rootCwd : `under ${opts.rootCwd}`})`);
+        }
         try {
-          spawned = sessions.spawn({ cwd: body.cwd ?? opts.rootCwd, name: body.name ?? null, prompt: body.prompt ?? null });
+          spawned = sessions.spawn({ cwd, name: body.name ?? null, prompt: body.prompt ?? null });
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code === "ENOENT") throw new HttpError(400, "no such directory");
           throw err;

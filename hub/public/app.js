@@ -37,6 +37,8 @@
     pane: "details",
     current: -1, // turn under the reader (turn rail)
     ws: null,
+    root: "",
+    scope: "cwd",
   };
 
   /* --------------------------------- helpers -------------------------------- */
@@ -73,7 +75,7 @@
     return s.length > n ? s.slice(0, n - 1) + "…" : s;
   }
   function shortCwd(cwd) {
-    const root = el.root.textContent;
+    const root = state.root;
     if (root && cwd.startsWith(root)) return "." + cwd.slice(root.length) || ".";
     return cwd;
   }
@@ -752,8 +754,15 @@
   /* ------------------------------- new session ------------------------------- */
 
   el.newToggle.addEventListener("click", () => {
+    // In the default cwd scope every session starts in the root, so there is
+    // nothing to choose; wider scopes may pick a directory in scope.
+    const fixed = state.scope === "cwd";
+    el.newForm.elements.cwd.value = fixed ? "" : el.newForm.elements.cwd.value;
+    el.newForm.elements.cwd.parentElement.hidden = fixed;
+    el.newForm.elements.cwd.placeholder = state.scope === "tree" ? `${state.root} or below` : state.root;
+    $("new-root").textContent = fixed ? `Starts in ${state.root}` : "";
     el.newDialog.showModal();
-    el.newForm.elements.cwd.focus();
+    (fixed ? el.newForm.elements.name : el.newForm.elements.cwd).focus();
   });
   el.newCancel.addEventListener("click", () => el.newDialog.close());
   el.newForm.addEventListener("submit", async (ev) => {
@@ -868,12 +877,19 @@
 
   fetch("/api/root")
     .then((r) => (r.ok ? r.json() : { root: "" }))
-    .then((j) => (el.root.textContent = j.root || ""))
+    .then((j) => {
+      state.root = j.root || "";
+      state.scope = j.scope || "cwd";
+      el.root.textContent = state.scope === "all" ? "every session on this machine" : state.scope === "tree" ? `${state.root} and below` : state.root;
+      el.empty.textContent = state.scope === "cwd" ? `Pick a session on the right, or press + to start one in ${state.root}.` : "Pick a session on the right, or press + to start a new one.";
+    })
     .catch(() => {})
     .finally(() => {
       const hash = location.hash.slice(1);
       if (hash) state.selected = hash;
-      setInspector(state.inspector, state.pane);
+      // With nothing selected the list is the only way in, so show it.
+      if (hash) setInspector(state.inspector, state.pane);
+      else setInspector(true, "sessions");
       connect();
     });
   window.addEventListener("hashchange", () => {

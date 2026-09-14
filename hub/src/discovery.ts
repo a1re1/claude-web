@@ -104,6 +104,18 @@ export function isUnder(rootCwd: string, cwd: string): boolean {
   return cwd === rootCwd || cwd.startsWith(rootCwd + path.sep);
 }
 
+// Which sessions a hub lists: "cwd" is exactly the root directory (the
+// default, so one claude-web per project stays focused), "tree" adds every
+// directory below it (worktrees, packages), "all" is every session on the
+// machine regardless of directory.
+export type Scope = "cwd" | "tree" | "all";
+
+export function inScope(scope: Scope, rootCwd: string, cwd: string): boolean {
+  if (scope === "all") return true;
+  if (scope === "tree") return isUnder(rootCwd, cwd);
+  return cwd === rootCwd;
+}
+
 /* ------------------------------ transcript scan ------------------------------ */
 
 const SCAN_WINDOW = 64 * 1024; // read at most the first/last 64 KiB
@@ -223,20 +235,22 @@ interface CacheEntry {
   meta: TranscriptMeta;
 }
 
-// Discovers Claude Code sessions under `rootCwd`: every transcript directly
+// Discovers the Claude Code sessions in scope of `rootCwd`: every transcript directly
 // inside ~/.claude/projects/<encoded> (or <encoded>-<suffix> for worktrees),
 // merged with live registry entries from readRegistry(). Files larger than
 // 128 KiB are read only in bounded first/last 64 KiB windows, and per-file
 // metadata is cached by path+mtime+size so unchanged files are not re-scanned.
 export class SessionIndex {
   private readonly rootCwd: string;
+  private readonly scope: Scope;
   private readonly home: string;
   private readonly cache = new Map<string, CacheEntry>(); // keyed by file path
   private sessions: SessionInfo[] = [];
   private cwdFallback = new Set<string>(); // ids whose cwd is the rootCwd fallback, per refresh
 
-  constructor(opts: { rootCwd: string; home?: string }) {
+  constructor(opts: { rootCwd: string; scope?: Scope; home?: string }) {
     this.rootCwd = opts.rootCwd;
+    this.scope = opts.scope ?? "cwd";
     this.home = opts.home ?? os.homedir();
   }
 
@@ -257,7 +271,8 @@ export class SessionIndex {
     const byId = new Map<string, SessionInfo>();
     this.cwdFallback = new Set();
     for (const dirName of dirNames) {
-      if (dirName !== prefix && !dirName.startsWith(prefix + "-")) continue;
+      // Cheap pre-filter on the encoded directory name; "all" scans everything.
+      if (this.scope !== "all" && dirName !== prefix && !dirName.startsWith(prefix + "-")) continue;
       let dirents: fs.Dirent[];
       try {
         dirents = await fs.promises.readdir(path.join(projectsDir, dirName), {
@@ -275,7 +290,7 @@ export class SessionIndex {
         // The slug encoding is lossy ("/x/app 2" and "/x/app/2" both become
         // "-x-app-2"), so the directory prefix is only a pre-filter: the cwd
         // recorded in the transcript decides.
-        if (info !== null && isUnder(this.rootCwd, info.cwd)) byId.set(info.id, info);
+        if (info !== null && inScope(this.scope, this.rootCwd, info.cwd)) byId.set(info.id, info);
       }
     }
     await this.mergeRegistry(byId);
@@ -361,12 +376,12 @@ export class SessionIndex {
     };
   }
 
-  // Merge alive registry entries whose cwd is under rootCwd: a matching
+  // Merge alive registry entries whose cwd is in scope: a matching
   // transcript becomes running (with pid/name/busy/memory); a live entry
   // without a transcript yet appears as a transcript-less SessionInfo.
   private async mergeRegistry(byId: Map<string, SessionInfo>): Promise<void> {
     const live = readRegistry(this.home).filter(
-      (entry) => entry.alive && isUnder(this.rootCwd, entry.cwd),
+      (entry) => entry.alive && inScope(this.scope, this.rootCwd, entry.cwd),
     );
     const memory = readMemory(live.map((e) => e.pid));
     for (const entry of live) {

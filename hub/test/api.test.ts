@@ -60,6 +60,7 @@ beforeAll(() => {
     port: 0,
     hostname: "127.0.0.1",
     rootCwd: root,
+    scope: "tree", // the past fixture lives in root/sub
     home,
     refreshMs: 100,
     sessions: new SessionManager({ spawnCommand: () => ["cat"], hubUrl: "ws://127.0.0.1:1" }),
@@ -113,7 +114,7 @@ describe("hub HTTP API", () => {
     const r = await fetch(base + "/health");
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({ ok: true });
-    expect(await (await fetch(base + "/api/root")).json()).toEqual({ root });
+    expect(await (await fetch(base + "/api/root")).json()).toEqual({ root, scope: "tree" });
   });
 
   test("serves the UI", async () => {
@@ -167,6 +168,22 @@ describe("hub HTTP API", () => {
   test("invalid bodies are 400", async () => {
     expect((await post("/api/sessions", { cwd: 1 })).status).toBe(400);
     expect((await post("/api/sessions", { cwd: join(root, "missing-dir") })).status).toBe(400);
+    expect((await post("/api/sessions", { cwd: join(home, "elsewhere") })).status).toBe(400); // outside the tree
+  });
+
+  test("the default cwd scope refuses to start sessions elsewhere", async () => {
+    const focused = createHub({ port: 0, hostname: "127.0.0.1", rootCwd: root, home });
+    try {
+      const url = `http://127.0.0.1:${focused.server.port}`;
+      expect(await (await fetch(url + "/api/root")).json()).toEqual({ root, scope: "cwd" });
+      const ids = (await (await fetch(url + "/api/sessions")).json()).map((s: any) => s.id);
+      expect(ids).not.toContain(PAST_ID); // root/sub is out of scope
+      const r = await fetch(url + "/api/sessions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: join(root, "sub") }) });
+      expect(r.status).toBe(400);
+      expect((await r.json()).error).toContain("scope");
+    } finally {
+      await focused.stop();
+    }
     expect((await post("/api/sessions", "not json")).status).toBe(400);
   });
 
@@ -402,7 +419,7 @@ describe("agent and UI websockets", () => {
   });
 
   test("agent hello without the configured token is closed", async () => {
-    const gated = createHub({ port: 0, hostname: "127.0.0.1", rootCwd: root, home, agentToken: "s3cret" });
+    const gated = createHub({ port: 0, hostname: "127.0.0.1", rootCwd: root, scope: "tree", home, agentToken: "s3cret" });
     try {
       const url = `ws://127.0.0.1:${gated.server.port}/agent`;
       const hello = { type: "hello", sessionId: PAST_ID, cwd: root, pid: 1, ppid: 1, name: null };

@@ -2,9 +2,11 @@
 
 A browser UI for [Claude Code](https://code.claude.com) sessions, in the spirit of `drip --ui`.
 Run `claude-web` from a project directory and it prints a URL. The page lists every Claude
-session under that directory, running or past, renders the whole conversation live (prompts,
+session in that directory, running or past, renders the whole conversation live (prompts,
 assistant text, thinking, tool calls and results, model, token usage, context pressure), and can
-start a new session there, message it, interrupt a turn, or kill it.
+start a new session there, message it, interrupt a turn, or kill it. One `claude-web` per project
+keeps each tab focused; `--tree` widens it to subdirectories and `--all` to every session on the
+machine.
 
 ```
  claude-web (Bun, first free port from 8790)
@@ -28,15 +30,18 @@ unless the optional plugin is loaded in them.
 bun install
 cd ~/src/my-project
 bun run /path/to/claude-web/hub/src/cli.ts        # or `bun link` once and run `claude-web`
-# claude-web: http://127.0.0.1:8790/  (sessions under /Users/you/src/my-project)
+# claude-web: http://127.0.0.1:8790/  (sessions in /Users/you/src/my-project)
 ```
 
 Flags: `--port N` (default: first free port from 8790, or `CLAUDE_WEB_PORT`), `--host H`
-(default `127.0.0.1`), `--root DIR` (default: the current directory), `--open` (launch the browser).
+(default `127.0.0.1`), `--root DIR` (default: the current directory), `--tree` (also list
+sessions in directories below the root, e.g. worktrees), `--all` (every session on the machine,
+whatever its directory), `--open` (launch the browser).
 
 ### The page
 
-- **Sessions rail** — every session whose working directory is the root or below it. Running
+- **Sessions** — every session whose working directory is the root (or below it with `--tree`,
+  anywhere with `--all`). Running
   sessions come first with their resident memory; a pulsing dot means Claude is mid-turn. Sessions
   this `claude-web` started carry a `claude-web` badge. Sessions that are alive but have never been
   used (an unused terminal tab: no conversation yet) are hidden behind **show empty sessions**,
@@ -52,8 +57,9 @@ Flags: `--port N` (default: first free port from 8790, or `CLAUDE_WEB_PORT`), `-
   `claude-web` started; a session started from another terminal shows as read-only. The one
   exception is Kill on an empty external session (idle, no conversation): the hub SIGTERMs it by
   pid, since nothing can be lost.
-- **New session** — starts `claude --session-id <uuid> [--name …]` in the given directory
-  (default: the root); an optional first prompt is typed once the input box appears.
+- **New session** — starts `claude --session-id <uuid> [--name …]` in the root (with `--tree`
+  or `--all` a directory in scope can be chosen); an optional first prompt is typed once the input
+  box appears.
 - **Resume** — on any session that is not running: relaunches it with `claude --resume <id>` in
   its own directory under claude-web's PTY. Same id, same transcript, and from then on Send, Stop,
   Kill and the Terminal tab work for it.
@@ -129,8 +135,8 @@ entries, tailer), `hub/src/sessions.ts` (PTY processes), `hub/src/index.ts` (HTT
 
 ## Troubleshooting
 
-- **A session is missing from the rail** — its working directory is outside the root; run
-  `claude-web --root` higher up, or from `~` to see everything.
+- **A session is missing from the list** — its working directory is not the root. Sessions in
+  subdirectories (worktrees, packages) need `--tree`; `--all` shows everything on the machine.
 - **Send is disabled** — the session was not started by this `claude-web` and has no plugin attached.
   If it is not running, **Resume** picks it up here; if it is running in another terminal, it keeps
   its own stdin, so exit it there first or use the plugin.
