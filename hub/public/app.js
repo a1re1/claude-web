@@ -389,6 +389,9 @@
   function isAgentTurn(e) {
     return e.kind === "text" && !e.sidechain;
   }
+  function isNotice(e) {
+    return e.kind === "system" && e.subtype === "task-notification" && !e.sidechain;
+  }
   function rowVisible(row) {
     const e = row.entry;
     if (e.sidechain && !el.showSidechain.checked) return false;
@@ -407,6 +410,11 @@
       addTurn({ kind: "user", ts: e.ts, node: h("div", { class: "turn user" }, bubble), label: "You", title: short(e.text, 90), excerpt: "" });
     } else if (isAgentTurn(e)) {
       addTurn({ kind: "agent", ts: e.ts, node: h("div", { class: "turn agent" }, markdown(e.text)), label: "Claude", title: short(e.text, 90), excerpt: short(e.text.slice(90), 200) });
+    } else if (isNotice(e)) {
+      // A finished background task, shown the way Claude Code does: one line with a status dot.
+      const ok = e.level === "completed";
+      const node = h("div", { class: "turn notice" }, h("span", { class: `dot ${ok ? "ok" : e.level ? "bad" : ""}` }), h("span", { class: "notice-text", text: e.text }), h("span", { class: "notice-status", text: ok ? "" : e.level || "" }));
+      addTurn({ kind: "notice", ts: e.ts, node, label: "Task", title: short(e.text, 90), excerpt: "" });
     } else {
       addRow(e);
     }
